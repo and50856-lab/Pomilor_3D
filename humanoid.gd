@@ -1,0 +1,360 @@
+class_name Humanoid
+extends Node3D
+# Процедурный человечек с суставами. Лицо смотрит в -Z. Начало координат — ступни.
+# Позже можно заменить модель на свою (из Blender), сохранив те же методы управления.
+
+const HIP_Y: float = 0.92
+
+var skin: Color = Color(0.85, 0.65, 0.5)
+var shirt: Color = Color(0.2, 0.3, 0.6)
+var pants: Color = Color(0.15, 0.15, 0.2)
+var hair: Color = Color(0.1, 0.07, 0.05)
+var owner_char = null
+var with_hitboxes: bool = false
+
+var hips: Node3D
+var torso: Node3D
+var head: Node3D
+var arm_l: Node3D
+var arm_r: Node3D
+var fore_l: Node3D
+var fore_r: Node3D
+var leg_l: Node3D
+var leg_r: Node3D
+var shin_l: Node3D
+var shin_r: Node3D
+var hand_r: Node3D
+var weapon_node: Node3D = null
+var weapon_id: String = ""
+var meshes: Array = []
+
+# входы анимации (выставляет владелец)
+var speed: float = 0.0
+var run_amt: float = 0.0
+var aim: int = 0
+var sitting: bool = false
+var wounded: String = ""
+var dead: bool = false
+var honk_t: float = 0.0
+var pitch_aim: float = 0.0
+
+var _cycle: float = 0.0
+var _time: float = 0.0
+var _act: String = ""
+var _act_t: float = 0.0
+var _act_dur: float = 1.0
+
+
+func build() -> void:
+    hips = Node3D.new()
+    hips.position = Vector3(0.0, HIP_Y, 0.0)
+    add_child(hips)
+    torso = Node3D.new()
+    hips.add_child(torso)
+    _box(torso, Vector3(0.40, 0.58, 0.22), Vector3(0, 0.30, 0), shirt)
+    _box(torso, Vector3(0.36, 0.14, 0.21), Vector3(0, 0.0, 0), pants)
+    head = Node3D.new()
+    head.position = Vector3(0, 0.68, 0)
+    torso.add_child(head)
+    _sphere(head, 0.115, Vector3(0, 0.12, 0), skin)
+    _box(head, Vector3(0.23, 0.07, 0.24), Vector3(0, 0.2, 0.01), hair)
+    _box(head, Vector3(0.06, 0.06, 0.06), Vector3(0, 0.1, -0.11), skin.darkened(0.1))
+    var al: Array = _make_arm(-0.26, shirt)
+    arm_l = al[0]
+    fore_l = al[1]
+    var ar: Array = _make_arm(0.26, shirt)
+    arm_r = ar[0]
+    fore_r = ar[1]
+    hand_r = ar[2]
+    var ll: Array = _make_leg(-0.10)
+    leg_l = ll[0]
+    shin_l = ll[1]
+    var lr: Array = _make_leg(0.10)
+    leg_r = lr[0]
+    shin_r = lr[1]
+    if with_hitboxes:
+        var hs := SphereShape3D.new()
+        hs.radius = 0.17
+        HitBox.attach(head, hs, Vector3(0, 0.12, 0), "head", owner_char)
+        var tb := BoxShape3D.new()
+        tb.size = Vector3(0.46, 0.64, 0.3)
+        HitBox.attach(torso, tb, Vector3(0, 0.3, 0), "torso", owner_char)
+        for a in [arm_l, arm_r]:
+            var ab := BoxShape3D.new()
+            ab.size = Vector3(0.15, 0.62, 0.15)
+            HitBox.attach(a, ab, Vector3(0, -0.28, 0), "arm", owner_char)
+        for l in [leg_l, leg_r]:
+            var lb := BoxShape3D.new()
+            lb.size = Vector3(0.2, 0.92, 0.22)
+            HitBox.attach(l, lb, Vector3(0, -0.45, 0), "leg", owner_char)
+
+
+func _reg(mi: MeshInstance3D) -> void:
+    mi.visibility_range_end = 120.0
+    meshes.append(mi)
+
+
+func _box(p: Node3D, size: Vector3, pos: Vector3, c: Color) -> void:
+    var mi := MeshInstance3D.new()
+    var bm := BoxMesh.new()
+    bm.size = size
+    mi.mesh = bm
+    mi.material_override = WeaponModel.mat(c, 0.0, 0.8)
+    mi.position = pos
+    p.add_child(mi)
+    _reg(mi)
+
+
+func _sphere(p: Node3D, r: float, pos: Vector3, c: Color) -> void:
+    var mi := MeshInstance3D.new()
+    var sm := SphereMesh.new()
+    sm.radius = r
+    sm.height = r * 2.0
+    sm.radial_segments = 10
+    sm.rings = 6
+    mi.mesh = sm
+    mi.material_override = WeaponModel.mat(c, 0.0, 0.8)
+    mi.position = pos
+    p.add_child(mi)
+    _reg(mi)
+
+
+func _capsule(p: Node3D, r: float, h: float, pos: Vector3, c: Color) -> void:
+    var mi := MeshInstance3D.new()
+    var cm := CapsuleMesh.new()
+    cm.radius = r
+    cm.height = h
+    cm.radial_segments = 8
+    cm.rings = 3
+    mi.mesh = cm
+    mi.material_override = WeaponModel.mat(c, 0.0, 0.8)
+    mi.position = pos
+    p.add_child(mi)
+    _reg(mi)
+
+
+func _make_arm(x: float, sleeve: Color) -> Array:
+    var up := Node3D.new()
+    up.position = Vector3(x, 0.52, 0)
+    torso.add_child(up)
+    _capsule(up, 0.055, 0.32, Vector3(0, -0.15, 0), sleeve)
+    var fore := Node3D.new()
+    fore.position = Vector3(0, -0.30, 0)
+    up.add_child(fore)
+    _capsule(fore, 0.048, 0.30, Vector3(0, -0.14, 0), skin)
+    var hand := Node3D.new()
+    hand.position = Vector3(0, -0.29, 0)
+    fore.add_child(hand)
+    _sphere(hand, 0.05, Vector3.ZERO, skin)
+    return [up, fore, hand]
+
+
+func _make_leg(x: float) -> Array:
+    var th := Node3D.new()
+    th.position = Vector3(x, 0, 0)
+    hips.add_child(th)
+    _capsule(th, 0.08, 0.46, Vector3(0, -0.22, 0), pants)
+    var sh := Node3D.new()
+    sh.position = Vector3(0, -0.45, 0)
+    th.add_child(sh)
+    _capsule(sh, 0.065, 0.46, Vector3(0, -0.22, 0), pants)
+    _box(sh, Vector3(0.10, 0.07, 0.26), Vector3(0, -0.43, -0.05), Color(0.08, 0.08, 0.09))
+    return [th, sh]
+
+
+func set_weapon(id: String) -> void:
+    if weapon_node != null and is_instance_valid(weapon_node):
+        weapon_node.queue_free()
+    weapon_node = null
+    weapon_id = id
+    if id == "":
+        aim = 0
+        return
+    var d: Dictionary = WeaponDefs.get_def(id)
+    aim = int(d.get("hold", 0))
+    weapon_node = WeaponModel.build(id)
+    weapon_node.rotation = Vector3(-PI * 0.5, 0.0, 0.0)
+    hand_r.add_child(weapon_node)
+
+
+func weapon_muzzle() -> Node3D:
+    if weapon_node != null and is_instance_valid(weapon_node):
+        return weapon_node.find_child("Muzzle", true, false) as Node3D
+    return null
+
+
+func set_shadow_only(on: bool) -> void:
+    var mode: int = GeometryInstance3D.SHADOW_CASTING_SETTING_SHADOWS_ONLY if on else GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+    for m in meshes:
+        (m as GeometryInstance3D).cast_shadow = mode
+    if weapon_node != null:
+        WeaponModel.set_shadow_mode(weapon_node, mode)
+
+
+func play(act_name: String, dur: float) -> void:
+    _act = act_name
+    _act_dur = maxf(dur, 0.05)
+    _act_t = _act_dur
+
+
+func honk() -> void:
+    honk_t = 0.45
+
+
+func die(_dir: Vector3) -> void:
+    if dead:
+        return
+    dead = true
+    var tw: Tween = create_tween()
+    tw.set_parallel(true)
+    var tx: float = -PI * 0.5 if randf() < 0.5 else PI * 0.5
+    tw.tween_property(self, "rotation:x", tx, 0.5).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+    tw.tween_property(self, "position:y", 0.14, 0.5)
+    arm_l.rotation = Vector3(0.4, 0.0, 0.7)
+    arm_r.rotation = Vector3(-0.3, 0.0, -0.8)
+    fore_l.rotation = Vector3(-0.4, 0, 0)
+    fore_r.rotation = Vector3(-0.3, 0, 0)
+    leg_l.rotation = Vector3(0.1, 0, 0.15)
+    leg_r.rotation = Vector3(-0.1, 0, -0.2)
+    shin_l.rotation = Vector3.ZERO
+    shin_r.rotation = Vector3(-0.2, 0, 0)
+    torso.rotation = Vector3.ZERO
+    head.rotation = Vector3(0.0, 0.5, 0.2)
+    hips.position.y = HIP_Y
+
+
+func _rot(n: Node3D, x: float, y: float, z: float, k: float) -> void:
+    var r: Vector3 = n.rotation
+    n.rotation = Vector3(lerpf(r.x, x, k), lerpf(r.y, y, k), lerpf(r.z, z, k))
+
+
+func _process(delta: float) -> void:
+    if dead:
+        return
+    _time += delta
+    var k: float = minf(1.0, delta * 12.0)
+    _act_t = maxf(0.0, _act_t - delta)
+    honk_t = maxf(0.0, honk_t - delta)
+    var p: float = 1.0 - _act_t / _act_dur if _act != "" else 0.0
+    var ph: float = sin(p * PI) if _act_t > 0.0 else 0.0
+    var amp: float = clampf(speed / 5.5, 0.0, 1.0) * (0.6 + 0.4 * run_amt)
+    if speed > 0.15:
+        _cycle += delta * (4.2 + speed * 1.15)
+    var s: float = sin(_cycle)
+    var c: float = cos(_cycle)
+
+    # ---- ноги и корпус
+    var hip_y: float = HIP_Y + absf(c) * 0.035 * amp
+    var lx: float = s * amp * 0.9
+    var rx: float = -s * amp * 0.9
+    var lshin: float = -maxf(0.0, c) * amp * 1.1
+    var rshin: float = -maxf(0.0, -c) * amp * 1.1
+    var tors_x: float = -0.12 * run_amt * amp + sin(_time * 1.6) * 0.012
+    var tors_y: float = s * amp * 0.12
+    var tors_z: float = 0.0
+    var hip_z: float = s * 0.03 * amp
+    # ---- руки
+    var alx: float = -s * amp * 0.7
+    var arx: float = s * amp * 0.7
+    var alz: float = 0.04
+    var arz: float = -0.04
+    var flx: float = -0.25 - amp * 0.5 * run_amt
+    var frx: float = flx
+    var head_x: float = 0.0
+
+    if aim == 1:
+        arx = 1.45 + pitch_aim
+        frx = -0.1
+        arz = -0.05
+    elif aim == 2:
+        arx = 1.25 + pitch_aim
+        frx = -0.6
+        arz = -0.15
+        alx = 1.35 + pitch_aim
+        flx = -0.9
+        alz = 0.35
+    elif aim == 3:
+        arx = 0.5
+        frx = -1.2
+
+    if wounded == "torso":
+        alx = 0.5
+        alz = 0.5
+        flx = -1.7
+        arx = 0.5
+        arz = -0.5
+        frx = -1.7
+        tors_x = -0.4
+        head_x = 0.3
+    elif wounded == "leg":
+        arx = 0.5
+        frx = -0.7
+        arz = -0.25
+        lx *= 0.3
+        lshin = -0.12
+        hip_z = s * 0.12
+        tors_z = 0.12
+        tors_x = -0.12
+    elif wounded == "arm":
+        arx = 0.6
+        arz = -0.7
+        frx = -1.5
+        alx = 0.2
+        flx = -0.4
+        tors_x = -0.2
+
+    if sitting:
+        hip_y = 0.30
+        lx = 1.45
+        rx = 1.45
+        lshin = -1.5
+        rshin = -1.5
+        hip_z = 0.0
+        tors_x = 0.12
+        tors_y = 0.0
+        alx = 0.9
+        arx = 0.9
+        flx = -0.8
+        frx = -0.8
+        alz = 0.1
+        arz = -0.1
+        if honk_t > 0.0:
+            arx = 1.0
+            frx = -0.8 + sin((1.0 - honk_t / 0.45) * PI) * 0.4
+
+    # ---- одноразовые действия
+    if _act_t > 0.0:
+        match _act:
+            "punch":
+                arx = lerpf(0.5, 1.55, ph)
+                frx = lerpf(-1.6, -0.05, ph)
+                tors_y = -0.4 * ph
+            "swing":
+                arx = lerpf(2.6, 0.4, p)
+                frx = -0.5
+                tors_x = -0.25 * ph
+            "throw":
+                arx = lerpf(0.2, 1.7, ph)
+                frx = -0.3
+            "hit":
+                tors_x = -0.45 * ph
+                head_x = 0.35 * ph
+            "recoil":
+                arx += 0.15 * ph
+                tors_x += 0.05 * ph
+            "reload":
+                arx = 0.9
+                frx = -1.2
+
+    hips.position.y = lerpf(hips.position.y, hip_y, k)
+    _rot(leg_l, lx, 0.0, 0.0, k)
+    _rot(leg_r, rx, 0.0, 0.0, k)
+    _rot(shin_l, lshin, 0.0, 0.0, k)
+    _rot(shin_r, rshin, 0.0, 0.0, k)
+    _rot(torso, tors_x, tors_y, tors_z, k)
+    _rot(hips, 0.0, 0.0, hip_z, k)
+    _rot(arm_l, alx, 0.0, alz, k)
+    _rot(arm_r, arx, 0.0, arz, k)
+    _rot(fore_l, flx, 0.0, 0.0, k)
+    _rot(fore_r, frx, 0.0, 0.0, k)
+    _rot(head, head_x, 0.0, 0.0, k)
