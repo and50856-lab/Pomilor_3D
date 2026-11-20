@@ -85,11 +85,20 @@ jobs:
           fi
           exit 0
 
-      - name: Экспорт APK
+      - name: Экспорт APK (обычный, Mobile — для слабых и средних телефонов)
         run: |
           mkdir -p build
           godot --headless --path . --export-debug "Android" build/Pomilor3D.apk 2>&1 | tee export.log
           test -f build/Pomilor3D.apk
+
+      - name: Экспорт APK (Forward+ — максимум графики для мощных телефонов)
+        continue-on-error: true
+        run: |
+          cp project.godot project.godot.bak
+          sed -i 's#^renderer/rendering_method="mobile"#renderer/rendering_method="forward_plus"#; s#^renderer/rendering_method.mobile="mobile"#renderer/rendering_method.mobile="forward_plus"#' project.godot
+          grep -n "rendering_method" project.godot
+          godot --headless --path . --export-debug "Android" build/Pomilor3D-ForwardPlus.apk 2>&1 | tee export_fp.log
+          cp project.godot.bak project.godot
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -98,11 +107,18 @@ jobs:
           path: |
             selftest.log
             export.log
+            export_fp.log
 
       - uses: actions/upload-artifact@v4
         with:
           name: Pomilor3D-debug-apk
           path: build/Pomilor3D.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Pomilor3D-ForwardPlus-apk
+          path: build/Pomilor3D-ForwardPlus.apk
+          if-no-files-found: ignore
 
       - name: Итог самотеста
         if: env.FAILED == '1'
