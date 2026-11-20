@@ -152,7 +152,7 @@ func _apply_viewport() -> void:
     if scale > 1.001:
         vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR
     elif scale < 0.999:
-        if graphics >= 1 and not is_compat():
+        if graphics >= 1 and is_forward_plus():
             vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_FSR
         else:
             vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR
