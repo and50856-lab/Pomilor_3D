@@ -18,7 +18,7 @@ func _has(j: int, k: int, sx: int, sz: int) -> bool:
     return Const.node_ok(j, k) and Const.node_ok(j + sx, k + sz)
 
 
-func _get(j: int, k: int, sx: int, sz: int) -> int:
+func _pt(j: int, k: int, sx: int, sz: int) -> int:
     var key: String = "%d_%d_%d_%d" % [j, k, sx, sz]
     if _idx.has(key):
         return _idx[key]
@@ -51,28 +51,28 @@ func build() -> void:
             var c: Vector3 = Const.node_pos(j, k)
             for sx in [-1, 1]:
                 for sz in [-1, 1]:
-                    var a: int = _get(j, k, sx, sz)
+                    var a: int = _pt(j, k, sx, sz)
                     if a < 0:
                         continue
                     # переход через ногу дороги по X (ось 0): (sx,sz) <-> (sx,-sz)
                     if sz == 1:
-                        var b: int = _get(j, k, sx, -1)
+                        var b: int = _pt(j, k, sx, -1)
                         if b >= 0 and Const.node_ok(j + sx, k):
                             _link(a, b, 0, c.z, 1)
                     # переход через ногу по Z (ось 1): (sx,sz) <-> (-sx,sz)
                     if sx == 1:
-                        var b2: int = _get(j, k, -1, sz)
+                        var b2: int = _pt(j, k, -1, sz)
                         if b2 >= 0 and Const.node_ok(j, k + sz):
                             _link(a, b2, 1, c.x, 0)
             # тротуары вдоль дорог
             for sz in [-1, 1]:
-                var a1: int = _get(j, k, 1, sz)
-                var b1: int = _get(j + 1, k, -1, sz)
+                var a1: int = _pt(j, k, 1, sz)
+                var b1: int = _pt(j + 1, k, -1, sz)
                 if a1 >= 0 and b1 >= 0:
                     _link(a1, b1, -1, c.z, 0)
             for sx in [-1, 1]:
-                var a2: int = _get(j, k, sx, 1)
-                var b3: int = _get(j, k + 1, sx, -1)
+                var a2: int = _pt(j, k, sx, 1)
+                var b3: int = _pt(j, k + 1, sx, -1)
                 if a2 >= 0 and b3 >= 0:
                     _link(a2, b3, -1, c.x, 1)
 
