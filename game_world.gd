@@ -171,7 +171,7 @@ func _ground_mat(ca: Color, cb: Color, tile: float, rough: float, paving: float)
 
 
 func _make_materials() -> void:
-    var sz: int = 512 if Settings.graphics >= 4 else 256
+    var sz: int = int(Settings.TEX_SIZE[Settings.graphics])
     _noise_a = _make_noise(0.045, 11, sz)
     _noise_b = _make_noise(0.03, 23, sz)
     _asphalt = _ground_mat(Color(0.09, 0.09, 0.1), Color(0.19, 0.19, 0.2), 0.11, 0.92, 0.0)
@@ -261,6 +261,7 @@ func _make_ground() -> void:
     mi.mesh = bm
     mi.material_override = _asphalt
     mi.position = Vector3(0, -0.1, 0)
+    mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
     add_child(mi)
     var gr := MeshInstance3D.new()
     var pm := PlaneMesh.new()
@@ -268,6 +269,7 @@ func _make_ground() -> void:
     gr.mesh = pm
     gr.material_override = _grass
     gr.position = Vector3(0, -0.04, 0)
+    gr.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
     add_child(gr)
     _add_box_collider(Vector3(3000.0, 4.0, 3000.0), Vector3(0, -2.0, 0))
     var w: float = half + 70.0
@@ -293,19 +295,18 @@ func _add_building(cx: float, cz: float, w: float, d: float, h: float, mat: Mate
 func _make_blocks() -> void:
     var blk: float = Const.PITCH - Const.ROAD_W
     var count: int = 0
+    var slab_mesh := BoxMesh.new()
+    slab_mesh.size = Vector3(blk, Const.CURB, blk)
+    var slab_st := SurfaceTool.new()
+    slab_st.begin(Mesh.PRIMITIVE_TRIANGLES)
     for bj in range(Const.N - 1):
         for bk in range(Const.N - 1):
             var a: Vector3 = Const.node_pos(bj, bk)
             var b: Vector3 = Const.node_pos(bj + 1, bk + 1)
             var c: Vector3 = (a + b) * 0.5
-            var slab := MeshInstance3D.new()
-            var sm := BoxMesh.new()
-            sm.size = Vector3(blk, Const.CURB, blk)
-            slab.mesh = sm
-            slab.material_override = _sidewalk
-            slab.position = Vector3(c.x, Const.CURB * 0.5, c.z)
-            add_child(slab)
-            _add_box_collider(Vector3(blk, Const.CURB, blk), slab.position)
+            var slab_pos: Vector3 = Vector3(c.x, Const.CURB * 0.5, c.z)
+            slab_st.append_from(slab_mesh, 0, Transform3D(Basis.IDENTITY, slab_pos))
+            _add_box_collider(Vector3(blk, Const.CURB, blk), slab_pos)
             var kind: int = _rng.randi() % 4
             if bj == 3 and bk == 3:
                 kind = 3
@@ -313,6 +314,11 @@ func _make_blocks() -> void:
             count += 1
             if count % 4 == 0:
                 await get_tree().process_frame
+    var all_slabs := MeshInstance3D.new()
+    all_slabs.mesh = slab_st.commit()
+    all_slabs.material_override = _sidewalk
+    all_slabs.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+    add_child(all_slabs)
 
 
 func _bmat() -> Material:
@@ -344,6 +350,7 @@ func _fill_block(c: Vector3, kind: int) -> void:
             park.mesh = pm
             park.material_override = _grass
             park.position = Vector3(c.x, Const.CURB + 0.015, c.z)
+            park.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
             add_child(park)
             var n: int = 8 + Settings.graphics * 3
             for i in n:
@@ -352,7 +359,7 @@ func _fill_block(c: Vector3, kind: int) -> void:
 
 # ---------- разметка ----------
 
-func _mm(mesh: Mesh, mat: Material, xfs: Array, cols: Array = []) -> MultiMeshInstance3D:
+func _mm(mesh: Mesh, mat: Material, xfs: Array, cols: Array = [], shadow: bool = false) -> MultiMeshInstance3D:
     var mm := MultiMesh.new()
     mm.transform_format = MultiMesh.TRANSFORM_3D
     var use_cols: bool = (not cols.is_empty()) and cols.size() == xfs.size()
@@ -366,6 +373,8 @@ func _mm(mesh: Mesh, mat: Material, xfs: Array, cols: Array = []) -> MultiMeshIn
     var mmi := MultiMeshInstance3D.new()
     mmi.multimesh = mm
     mmi.material_override = mat
+    if not shadow:
+        mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
     add_child(mmi)
     return mmi
 
@@ -410,7 +419,9 @@ func _make_markings() -> void:
                     var dsize: Vector3 = Vector3(3.0, 0.02, 0.18) if axis == 0 else Vector3(0.18, 0.02, 3.0)
                     xfs.append(Transform3D(Basis.from_scale(dsize), Vector3(dp.x, 0.012, dp.z)))
                     t += 8.0
-    _mm(BoxMesh.new(), _white, xfs)
+    var plane := PlaneMesh.new()
+    plane.size = Vector2(1.0, 1.0)
+    _mm(plane, _white, xfs)
 
 
 # ---------- светофоры, фонари, деревья ----------
@@ -446,18 +457,19 @@ func _make_furniture() -> void:
     pole_mesh.radial_segments = 8
     pole_mesh.rings = 1
     var dark: StandardMaterial3D = WeaponModel.mat(Color(0.08, 0.08, 0.09), 0.5, 0.6)
-    _mm(pole_mesh, dark, poles)
+    var prop_shadow: bool = Settings.shadows >= 3
+    _mm(pole_mesh, dark, poles, [], prop_shadow)
     var hm := BoxMesh.new()
     hm.size = Vector3(0.3, 1.1, 0.3)
-    _mm(hm, dark, housings)
+    _mm(hm, dark, housings, [], prop_shadow)
     var lm := SphereMesh.new()
     lm.radius = 0.11
     lm.height = 0.22
-    lm.radial_segments = 8
-    lm.rings = 4
+    lm.radial_segments = int(Settings.LAMP_SEG[Settings.graphics])
+    lm.rings = maxi(2, int(Settings.LAMP_SEG[Settings.graphics]) / 2)
     for a in 2:
         for col in 3:
-            _mm(lm, _lamp_mats[a][col], lamps[a][col])
+            _mm(lm, _lamp_mats[a][col], lamps[a][col], [], prop_shadow)
     # уличные фонари
     var lpoles: Array = []
     var lheads: Array = []
@@ -482,7 +494,7 @@ func _make_furniture() -> void:
     lpm.height = 7.0
     lpm.radial_segments = 8
     lpm.rings = 1
-    _mm(lpm, dark, lpoles)
+    _mm(lpm, dark, lpoles, [], prop_shadow)
     var lhm := BoxMesh.new()
     lhm.size = Vector3(0.9, 0.12, 0.3)
     var glow := StandardMaterial3D.new()
@@ -490,7 +502,7 @@ func _make_furniture() -> void:
     glow.emission_enabled = true
     glow.emission = Color(1.0, 0.95, 0.8)
     glow.emission_energy_multiplier = 0.4
-    _mm(lhm, glow, lheads)
+    _mm(lhm, glow, lheads, [], prop_shadow)
 
 
 func _make_trees() -> void:
@@ -526,18 +538,18 @@ func _make_trees() -> void:
     tm.top_radius = 0.12
     tm.bottom_radius = 0.18
     tm.height = 2.6
-    tm.radial_segments = 6
+    tm.radial_segments = int([5, 6, 8, 10, 12][Settings.graphics])
     tm.rings = 1
-    _mm(tm, WeaponModel.mat(Color(0.3, 0.2, 0.12), 0.0, 0.9), trunks)
+    _mm(tm, WeaponModel.mat(Color(0.3, 0.2, 0.12), 0.0, 0.9), trunks, [], Settings.shadows >= 2)
     var cm := SphereMesh.new()
     cm.radius = 1.7
     cm.height = 3.2
-    cm.radial_segments = 8
-    cm.rings = 4
+    cm.radial_segments = int(Settings.LAMP_SEG[Settings.graphics])
+    cm.rings = maxi(2, int(Settings.LAMP_SEG[Settings.graphics]) / 2)
     var cmat := StandardMaterial3D.new()
     cmat.vertex_color_use_as_albedo = true
     cmat.roughness = 0.9
-    _mm(cm, cmat, crowns, cols)
+    _mm(cm, cmat, crowns, cols, Settings.shadows >= 2)
 
 
 # ---------- игрок, люди, транспорт, интерфейс ----------

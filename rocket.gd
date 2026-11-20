@@ -55,11 +55,18 @@ func _physics_process(delta: float) -> void:
     life += delta
     var from: Vector3 = global_position
     var to: Vector3 = from + vel * delta
-    var q := PhysicsRayQueryParameters3D.create(from, to, Const.L_WORLD | Const.L_VEH | Const.L_HIT)
-    q.collide_with_areas = true
+    var q := PhysicsRayQueryParameters3D.create(from, to, Const.L_WORLD | Const.L_VEH)
     var hit: Dictionary = get_world_3d().direct_space_state.intersect_ray(q)
+    var end: Vector3 = to
     if not hit.is_empty():
-        global_position = hit["position"]
+        end = hit["position"]
+    var nh: Dictionary = Combat.ray_npc(from, end)
+    if not nh.is_empty():
+        global_position = nh["pos"]
+        _boom()
+        return
+    if not hit.is_empty():
+        global_position = end
         _boom()
         return
     global_position = to

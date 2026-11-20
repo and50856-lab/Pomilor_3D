@@ -146,6 +146,11 @@ for f, (rawlines, lines) in file_lines.items():
             if mm.group(1) in seen:
                 err(f, i, f"функция {mm.group(1)} объявлена повторно (первый раз строка {seen[mm.group(1)]})")
             seen[mm.group(1)] = i
+    # методы, конфликтующие со встроенными методами Object
+    for i, ln in enumerate(lines, 1):
+        mm = re.match(r"^\s*(?:static\s+)?func\s+(_get|_set|_to_string|_notification|_get_property_list|_property_can_revert|_property_get_revert|_validate_property)\b", ln)
+        if mm:
+            err(f, i, f"метод {mm.group(1)} переопределяет встроенный метод Object — переименуй")
     # := с Variant
     for i, ln in enumerate(lines, 1):
         mm = re.search(r":=\s*(\w+)\s*\(", ln)

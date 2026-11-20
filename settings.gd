@@ -12,8 +12,17 @@ const RENDER_SCALE: Array = [0.5, 0.66, 0.8, 1.0, 1.0]
 const VIEW_FAR: Array = [140.0, 220.0, 340.0, 520.0, 900.0]
 const SHADOW_ATLAS: Array = [1024, 2048, 2048, 4096, 8192]
 const SHADOW_DIST: Array = [45.0, 75.0, 110.0, 160.0, 240.0]
-const NPC_COUNT: Array = [8, 12, 18, 26, 36]
-const TRAFFIC_COUNT: Array = [5, 8, 12, 16, 22]
+const NPC_COUNT: Array = [8, 12, 20, 32, 50]
+const TRAFFIC_COUNT: Array = [5, 8, 12, 20, 30]
+# Детализация по пресету графики (индекс 0 = очень низко ... 4 = ультра)
+const LOD_PEOPLE: Array = [60.0, 90.0, 140.0, 220.0, 400.0]
+const LOD_LIMBS: Array = [25.0, 40.0, 65.0, 110.0, 220.0]
+const LOD_SMALL: Array = [15.0, 25.0, 40.0, 70.0, 140.0]
+const ANIM_DIST: Array = [40.0, 60.0, 90.0, 140.0, 250.0]
+const SEG_RADIAL: Array = [6, 8, 10, 12, 16]
+const SEG_RINGS: Array = [2, 3, 4, 5, 6]
+const LAMP_SEG: Array = [4, 6, 8, 12, 16]
+const TEX_SIZE: Array = [128, 256, 256, 512, 1024]
 const PART_SCALE: Array = [0.3, 0.5, 0.8, 1.0, 1.4]
 
 signal changed
@@ -46,6 +55,8 @@ func _ready() -> void:
 func load_settings() -> void:
     var cf := ConfigFile.new()
     if cf.load(PATH) != OK:
+        _auto_defaults()
+        save_settings()
         return
     graphics = clampi(int(cf.get_value("g", "graphics", graphics)), 0, 4)
     shadows = clampi(int(cf.get_value("g", "shadows", shadows)), 0, 4)
@@ -57,6 +68,23 @@ func load_settings() -> void:
     sensitivity = clampf(float(cf.get_value("p", "sens", sensitivity)), 0.3, 2.5)
     fov = clampf(float(cf.get_value("p", "fov", fov)), 60.0, 100.0)
     show_fps = bool(cf.get_value("p", "show_fps", show_fps))
+
+
+func _auto_defaults() -> void:
+    # Первый запуск: на слабых мобильных GPU сразу ставим лёгкие настройки.
+    if not OS.has_feature("mobile"):
+        return
+    var gpu: String = RenderingServer.get_video_adapter_name().to_lower()
+    var weak: Array = ["adreno (tm) 3", "adreno (tm) 4", "adreno (tm) 5", "adreno (tm) 60", "adreno (tm) 61", "mali-4", "mali-t", "mali-g31", "mali-g51", "mali-g52", "powervr", "videocore"]
+    for key in weak:
+        if gpu.contains(str(key)):
+            graphics = 1
+            shadows = 0
+            view_distance = 1
+            aa = 0
+            aniso = 1
+            bloom = false
+            return
 
 
 func save_settings() -> void:
@@ -208,7 +236,7 @@ func _apply_environment() -> void:
     env.tonemap_mode = Environment.TONE_MAPPER_ACES
     env.tonemap_exposure = 1.0
     env.tonemap_white = 6.0
-    env.glow_enabled = bloom
+    env.glow_enabled = bloom and graphics >= 1
     env.glow_intensity = 0.45 + 0.12 * float(graphics)
     env.glow_strength = 1.0
     env.glow_bloom = 0.03 + 0.012 * float(graphics)
@@ -231,10 +259,21 @@ func _apply_environment() -> void:
         env.ssao_intensity = 2.0
         env.volumetric_fog_enabled = graphics >= 4
         env.volumetric_fog_density = 0.004
+        _env_set("sdfgi_enabled", graphics >= 4)
+        if graphics >= 4:
+            _env_set("sdfgi_use_occlusion", true)
+            _env_set("sdfgi_bounce_feedback", 0.5)
+            _env_set("sdfgi_energy", 1.0)
+            _env_set("sdfgi_cascades", 4)
     if sky != null:
         sky.radiance_size = [Sky.RADIANCE_SIZE_32, Sky.RADIANCE_SIZE_64, Sky.RADIANCE_SIZE_128, Sky.RADIANCE_SIZE_256, Sky.RADIANCE_SIZE_512][graphics]
         if sky_high != null and sky_low != null:
             sky.sky_material = sky_high if graphics >= 4 else sky_low
+
+
+func _env_set(prop: String, value) -> void:
+    if env != null and prop in env:
+        env.set(prop, value)
 
 
 func _apply_view_distance() -> void:

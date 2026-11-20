@@ -27,6 +27,8 @@ var hand_r: Node3D
 var weapon_node: Node3D = null
 var weapon_id: String = ""
 var meshes: Array = []
+var active: bool = true
+var _lod_t: float = 0.0
 
 # входы анимации (выставляет владелец)
 var speed: float = 0.0
@@ -57,8 +59,8 @@ func build() -> void:
     head.position = Vector3(0, 0.68, 0)
     torso.add_child(head)
     _sphere(head, 0.115, Vector3(0, 0.12, 0), skin)
-    _box(head, Vector3(0.23, 0.07, 0.24), Vector3(0, 0.2, 0.01), hair)
-    _box(head, Vector3(0.06, 0.06, 0.06), Vector3(0, 0.1, -0.11), skin.darkened(0.1))
+    _box(head, Vector3(0.23, 0.07, 0.24), Vector3(0, 0.2, 0.01), hair, _fl())
+    _box(head, Vector3(0.06, 0.06, 0.06), Vector3(0, 0.1, -0.11), skin.darkened(0.1), _fs())
     var al: Array = _make_arm(-0.26, shirt)
     arm_l = al[0]
     fore_l = al[1]
@@ -72,29 +74,24 @@ func build() -> void:
     var lr: Array = _make_leg(0.10)
     leg_r = lr[0]
     shin_r = lr[1]
-    if with_hitboxes:
-        var hs := SphereShape3D.new()
-        hs.radius = 0.17
-        HitBox.attach(head, hs, Vector3(0, 0.12, 0), "head", owner_char)
-        var tb := BoxShape3D.new()
-        tb.size = Vector3(0.46, 0.64, 0.3)
-        HitBox.attach(torso, tb, Vector3(0, 0.3, 0), "torso", owner_char)
-        for a in [arm_l, arm_r]:
-            var ab := BoxShape3D.new()
-            ab.size = Vector3(0.15, 0.62, 0.15)
-            HitBox.attach(a, ab, Vector3(0, -0.28, 0), "arm", owner_char)
-        for l in [leg_l, leg_r]:
-            var lb := BoxShape3D.new()
-            lb.size = Vector3(0.2, 0.92, 0.22)
-            HitBox.attach(l, lb, Vector3(0, -0.45, 0), "leg", owner_char)
 
 
-func _reg(mi: MeshInstance3D) -> void:
-    mi.visibility_range_end = 120.0
+func _fl() -> float:
+    return float(Settings.LOD_LIMBS[Settings.graphics])
+
+
+func _fs() -> float:
+    return float(Settings.LOD_SMALL[Settings.graphics])
+
+
+func _reg(mi: MeshInstance3D, far: float = 0.0) -> void:
+    mi.visibility_range_end = far if far > 0.0 else float(Settings.LOD_PEOPLE[Settings.graphics])
+    if Settings.shadows < 2:
+        mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
     meshes.append(mi)
 
 
-func _box(p: Node3D, size: Vector3, pos: Vector3, c: Color) -> void:
+func _box(p: Node3D, size: Vector3, pos: Vector3, c: Color, far: float = 0.0) -> void:
     var mi := MeshInstance3D.new()
     var bm := BoxMesh.new()
     bm.size = size
@@ -102,50 +99,50 @@ func _box(p: Node3D, size: Vector3, pos: Vector3, c: Color) -> void:
     mi.material_override = WeaponModel.mat(c, 0.0, 0.8)
     mi.position = pos
     p.add_child(mi)
-    _reg(mi)
+    _reg(mi, far)
 
 
-func _sphere(p: Node3D, r: float, pos: Vector3, c: Color) -> void:
+func _sphere(p: Node3D, r: float, pos: Vector3, c: Color, far: float = 0.0) -> void:
     var mi := MeshInstance3D.new()
     var sm := SphereMesh.new()
     sm.radius = r
     sm.height = r * 2.0
-    sm.radial_segments = 10
-    sm.rings = 6
+    sm.radial_segments = int(Settings.SEG_RADIAL[Settings.graphics]) + 2
+    sm.rings = int(Settings.SEG_RINGS[Settings.graphics]) + 2
     mi.mesh = sm
     mi.material_override = WeaponModel.mat(c, 0.0, 0.8)
     mi.position = pos
     p.add_child(mi)
-    _reg(mi)
+    _reg(mi, far)
 
 
-func _capsule(p: Node3D, r: float, h: float, pos: Vector3, c: Color) -> void:
+func _capsule(p: Node3D, r: float, h: float, pos: Vector3, c: Color, far: float = 0.0) -> void:
     var mi := MeshInstance3D.new()
     var cm := CapsuleMesh.new()
     cm.radius = r
     cm.height = h
-    cm.radial_segments = 8
-    cm.rings = 3
+    cm.radial_segments = int(Settings.SEG_RADIAL[Settings.graphics])
+    cm.rings = int(Settings.SEG_RINGS[Settings.graphics])
     mi.mesh = cm
     mi.material_override = WeaponModel.mat(c, 0.0, 0.8)
     mi.position = pos
     p.add_child(mi)
-    _reg(mi)
+    _reg(mi, far)
 
 
 func _make_arm(x: float, sleeve: Color) -> Array:
     var up := Node3D.new()
     up.position = Vector3(x, 0.52, 0)
     torso.add_child(up)
-    _capsule(up, 0.055, 0.32, Vector3(0, -0.15, 0), sleeve)
+    _capsule(up, 0.055, 0.32, Vector3(0, -0.15, 0), sleeve, _fl())
     var fore := Node3D.new()
     fore.position = Vector3(0, -0.30, 0)
     up.add_child(fore)
-    _capsule(fore, 0.048, 0.30, Vector3(0, -0.14, 0), skin)
+    _capsule(fore, 0.048, 0.30, Vector3(0, -0.14, 0), skin, _fl())
     var hand := Node3D.new()
     hand.position = Vector3(0, -0.29, 0)
     fore.add_child(hand)
-    _sphere(hand, 0.05, Vector3.ZERO, skin)
+    _sphere(hand, 0.05, Vector3.ZERO, skin, _fs())
     return [up, fore, hand]
 
 
@@ -153,12 +150,12 @@ func _make_leg(x: float) -> Array:
     var th := Node3D.new()
     th.position = Vector3(x, 0, 0)
     hips.add_child(th)
-    _capsule(th, 0.08, 0.46, Vector3(0, -0.22, 0), pants)
+    _capsule(th, 0.08, 0.46, Vector3(0, -0.22, 0), pants, _fl())
     var sh := Node3D.new()
     sh.position = Vector3(0, -0.45, 0)
     th.add_child(sh)
-    _capsule(sh, 0.065, 0.46, Vector3(0, -0.22, 0), pants)
-    _box(sh, Vector3(0.10, 0.07, 0.26), Vector3(0, -0.43, -0.05), Color(0.08, 0.08, 0.09))
+    _capsule(sh, 0.065, 0.46, Vector3(0, -0.22, 0), pants, _fl())
+    _box(sh, Vector3(0.10, 0.07, 0.26), Vector3(0, -0.43, -0.05), Color(0.08, 0.08, 0.09), _fs())
     return [th, sh]
 
 
@@ -230,6 +227,15 @@ func _rot(n: Node3D, x: float, y: float, z: float, k: float) -> void:
 
 func _process(delta: float) -> void:
     if dead:
+        return
+    _lod_t -= delta
+    if _lod_t <= 0.0:
+        _lod_t = 0.3 + randf() * 0.2
+        var cam: Camera3D = get_viewport().get_camera_3d()
+        if cam != null:
+            var ad: float = float(Settings.ANIM_DIST[Settings.graphics])
+            active = cam.global_position.distance_squared_to(global_position) < ad * ad
+    if not active:
         return
     _time += delta
     var k: float = minf(1.0, delta * 12.0)

@@ -27,7 +27,7 @@ var _last_size: Vector2 = Vector2.ZERO
 
 func _ready() -> void:
     mouse_filter = Control.MOUSE_FILTER_IGNORE
-    set_anchors_preset(Control.PRESET_FULL_RECT)
+    UI.full_rect(self)
     _font = ThemeDB.fallback_font
     Game.toast.connect(_on_toast)
 
@@ -296,6 +296,9 @@ func _process(delta: float) -> void:
         _car_mode = car
         _release_all()
         close_wheel()
+    if size.x < 100.0 or size.y < 100.0:
+        position = Vector2.ZERO
+        size = get_viewport_rect().size
     if size != _last_size or _btns.is_empty():
         _build_layout()
     Ctl.t_run = run_on

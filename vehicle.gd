@@ -53,7 +53,6 @@ var reverse_t: float = 0.0
 var honk_pitch: float = 1.0
 
 var engine_snd: AudioStreamPlayer3D = null
-var hit_zone: Area3D = null
 var _recent: Dictionary = {}
 var _spin: float = 0.0
 var _ex: Array[RID] = []
@@ -125,19 +124,6 @@ func setup(id: String, color: Color) -> void:
             drive_share = [0.0, 0.0, 0.5, 0.5]
         _:
             drive_share = [0.25, 0.25, 0.25, 0.25]
-
-    hit_zone = Area3D.new()
-    hit_zone.collision_layer = 0
-    hit_zone.collision_mask = Const.L_CHAR
-    hit_zone.monitoring = true
-    hit_zone.monitorable = false
-    var hz := CollisionShape3D.new()
-    var hb := BoxShape3D.new()
-    hb.size = Vector3(width + 0.5, 1.4, length + 0.3)
-    hz.shape = hb
-    hz.position = Vector3(0.0, 0.5, 0.0)
-    hit_zone.add_child(hz)
-    add_child(hit_zone)
 
     engine_snd = Sfx.make_loop_player("engine", self, 55.0)
     engine_snd.volume_db = -8.0
@@ -458,22 +444,29 @@ func _visuals(delta: float) -> void:
 
 
 func _runover() -> void:
-    if absf(speed_ms) < 5.0 or hit_zone == null:
+    if absf(speed_ms) < 5.0:
         return
     var now: float = float(Time.get_ticks_msec()) / 1000.0
+    var inv: Transform3D = global_transform.affine_inverse()
     var dirv: Vector3 = -global_transform.basis.z * signf(speed_ms)
-    for b in hit_zone.get_overlapping_bodies():
-        if not (b is CharacterBody3D):
+    var hw: float = width * 0.5 + 0.35
+    var hl: float = half_len + 0.3
+    for w in Game.walkers():
+        var n3: Node3D = w as Node3D
+        if n3 == null or n3 == self:
             continue
-        var bid: int = b.get_instance_id()
+        var lp: Vector3 = inv * n3.global_position
+        if absf(lp.x) > hw or absf(lp.z) > hl or lp.y < -0.6 or lp.y > 2.0:
+            continue
+        var bid: int = n3.get_instance_id()
         if _recent.has(bid) and now - float(_recent[bid]) < 1.2:
             continue
         _recent[bid] = now
         var dmg: float = clampf(absf(speed_ms) * 9.0, 15.0, 180.0)
-        if b.has_method("take_hit"):
-            b.call("take_hit", "torso", dmg, dirv, self)
-        elif b.has_method("take_damage"):
-            b.call("take_damage", dmg * 0.5, dirv)
+        if n3.has_method("take_hit"):
+            n3.call("take_hit", "torso", dmg, dirv, self)
+        elif n3.has_method("take_damage"):
+            n3.call("take_damage", dmg * 0.5, dirv)
         Sfx.play3d("crash", global_position, -2.0, 1.0, 60.0)
 
 

@@ -6,7 +6,7 @@ var _prog: Array = [0.0]
 
 
 func _ready() -> void:
-    get_tree().create_timer(280.0).timeout.connect(_watchdog)
+    get_tree().create_timer(200.0).timeout.connect(_watchdog)
     _run()
 
 
@@ -85,6 +85,9 @@ func _run() -> void:
     await get_tree().process_frame
     world._resume()
     print("SELFTEST: меню предметов и пауза работают")
+    print("SELFTEST: размер HUD: ", world.hud.size)
+    if world.hud.size.x < 200.0 or world.hud.size.y < 100.0:
+        print("SCRIPT ERROR: HUD имеет нулевой размер")
 
     # оружие
     for id in WeaponDefs.ORDER:
