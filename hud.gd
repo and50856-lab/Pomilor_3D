@@ -1,15 +1,20 @@
 class_name Hud
 extends Control
-# Сенсорный интерфейс: адаптивный джойстик слева, кнопки справа, круговое меню оружия.
-# Всё рисуется и обрабатывается вручную (мультитач: можно двигаться и жать кнопки одновременно).
+# Сенсорный интерфейс: плавающий джойстик слева, кнопки справа, круговое меню оружия,
+# мини-карта и полная карта, спидометр. Всё рисуется и обрабатывается вручную (мультитач).
 
 signal open_items
 signal open_pause
 
 const JOY_R: float = 80.0
+const MM_POS: Vector2 = Vector2(28.0, 50.0)
+const MM_SIZE: float = 170.0
 
 var run_on: bool = false
 var wheel_open: bool = false
+var map_open: bool = false
+var map_center: Vector2 = Vector2.ZERO
+var map_zoom: float = 1.2
 
 var _font: Font
 var _btns: Array = []
@@ -23,6 +28,8 @@ var _toasts: Array = []
 var _flash_t: float = 0.0
 var _car_mode: bool = false
 var _last_size: Vector2 = Vector2.ZERO
+var _map_touch: Dictionary = {}
+var _pinch_d: float = 0.0
 
 
 func _ready() -> void:
@@ -33,7 +40,7 @@ func _ready() -> void:
 
 
 func _exit_tree() -> void:
-    if wheel_open:
+    if wheel_open or map_open:
         Game.set_slowmo(false)
     _release_all()
 
@@ -63,6 +70,7 @@ func _build_layout() -> void:
     _add("run", Vector2(w - 215.0, h - 70.0), 38.0, "БЕГ")
     _add("reload", Vector2(w - 335.0, h - 115.0), 34.0, "ПЕРЕЗ.")
     _add("drop", Vector2(w - 95.0, h - 250.0), 32.0, "БРОСИТЬ")
+    _add("aim", Vector2(w - 95.0, h - 335.0), 38.0, "ПРИЦЕЛ")
     _add("interact", Vector2(w - 340.0, h - 235.0), 46.0, "ДА")
     _add("cam", Vector2(w - 50.0, 52.0), 28.0, "ВИД")
     _add("pause", Vector2(w - 112.0, 52.0), 28.0, "")
@@ -77,15 +85,19 @@ func _build_layout() -> void:
     _last_size = size
 
 
+func _has_gun() -> bool:
+    if Game.equipped == "":
+        return false
+    var k: String = str(WeaponDefs.get_def(Game.equipped).get("kind", ""))
+    return k == "gun" or k == "rocket"
+
+
 func _active(id: String) -> bool:
     if _car_mode:
         return id in ["left", "right", "gas", "rev", "hand", "horn", "interact", "cam", "pause"]
     match id:
-        "reload":
-            if Game.equipped == "":
-                return false
-            var k: String = str(WeaponDefs.get_def(Game.equipped).get("kind", ""))
-            return k == "gun" or k == "rocket"
+        "reload", "aim":
+            return _has_gun()
         "drop":
             return Game.equipped != ""
         "interact":
@@ -104,6 +116,10 @@ func _button_at(p: Vector2) -> String:
         if p.distance_to(c) <= float(b["r"]) + 6.0:
             return id
     return ""
+
+
+func _mm_rect() -> Rect2:
+    return Rect2(MM_POS, Vector2(MM_SIZE, MM_SIZE))
 
 
 # ---------- ввод ----------
@@ -128,6 +144,8 @@ func _input(event: InputEvent) -> void:
                     _press(0, mb.position)
                 else:
                     _release(0)
+            elif map_open and mb.pressed and (mb.button_index == MOUSE_BUTTON_WHEEL_UP or mb.button_index == MOUSE_BUTTON_WHEEL_DOWN):
+                _zoom_map(1.15 if mb.button_index == MOUSE_BUTTON_WHEEL_UP else 0.87)
         elif event is InputEventMouseMotion:
             var mm: InputEventMouseMotion = event
             if (mm.button_mask & MOUSE_BUTTON_MASK_LEFT) != 0:
@@ -135,6 +153,9 @@ func _input(event: InputEvent) -> void:
 
 
 func _press(idx: int, p: Vector2) -> void:
+    if map_open:
+        _map_press(idx, p)
+        return
     if wheel_open:
         _wheel_press(p)
         return
@@ -142,6 +163,9 @@ func _press(idx: int, p: Vector2) -> void:
     if id != "":
         _touch_btn[idx] = id
         _btn_down(id)
+        return
+    if _mm_rect().has_point(p):
+        _open_map()
         return
     if not _car_mode and _joy_idx == -1 and p.x < size.x * 0.42 and p.y > size.y * 0.18:
         _joy_idx = idx
@@ -153,6 +177,9 @@ func _press(idx: int, p: Vector2) -> void:
 
 
 func _release(idx: int) -> void:
+    if _map_touch.has(idx):
+        _map_touch.erase(idx)
+        _pinch_d = 0.0
     if _touch_btn.has(idx):
         _btn_up(str(_touch_btn[idx]))
         _touch_btn.erase(idx)
@@ -164,8 +191,16 @@ func _release(idx: int) -> void:
 
 
 func _drag(idx: int, p: Vector2, rel: Vector2) -> void:
+    if map_open:
+        _map_drag(idx, p, rel)
+        return
     if wheel_open:
         _wheel_hover = _wheel_sector(p)
+        return
+    if _touch_btn.has(idx):
+        # палец, зажавший ОГОНЬ, может крутить камеру
+        if str(_touch_btn[idx]) == "fire":
+            Ctl.look += rel
         return
     if idx == _joy_idx:
         _joy_p = p
@@ -183,6 +218,7 @@ func _drag(idx: int, p: Vector2, rel: Vector2) -> void:
 
 func _release_all() -> void:
     _touch_btn.clear()
+    _map_touch.clear()
     _joy_idx = -1
     _look_idx = -1
     Ctl.t_move = Vector2.ZERO
@@ -192,12 +228,15 @@ func _release_all() -> void:
     Ctl.t_gas = false
     Ctl.t_rev = false
     Ctl.t_hand = false
+    Ctl.t_aim = false
 
 
 func _btn_down(id: String) -> void:
     match id:
         "fire":
             Ctl.t_fire = true
+        "aim":
+            Ctl.t_aim = true
         "run":
             run_on = not run_on
             Ctl.t_run = run_on
@@ -227,6 +266,8 @@ func _btn_up(id: String) -> void:
     match id:
         "fire":
             Ctl.t_fire = false
+        "aim":
+            Ctl.t_aim = false
         "left":
             Ctl.t_left = false
         "right":
@@ -237,6 +278,154 @@ func _btn_up(id: String) -> void:
             Ctl.t_rev = false
         "hand":
             Ctl.t_hand = false
+
+
+# ---------- карта ----------
+
+func _city_half() -> float:
+    return Const.half_size() + 12.0
+
+
+func _fit_zoom() -> float:
+    return minf(size.x - 60.0, size.y - 60.0) / (_city_half() * 2.0)
+
+
+func _player_pos2() -> Vector2:
+    var p: Vector3 = (Game.player as Node3D).global_position
+    return Vector2(p.x, p.z)
+
+
+func _player_heading() -> Vector2:
+    var pl = Game.player
+    if pl.in_vehicle != null:
+        var f: Vector3 = -(pl.in_vehicle as Vehicle).global_transform.basis.z
+        return Vector2(f.x, f.z).normalized()
+    return Vector2(-sin(pl.cam_yaw), -cos(pl.cam_yaw))
+
+
+func _open_map() -> void:
+    _release_all()
+    map_open = true
+    map_center = _player_pos2()
+    map_zoom = _fit_zoom()
+    _pinch_d = 0.0
+    Game.set_slowmo(true)
+
+
+func close_map() -> void:
+    if map_open:
+        map_open = false
+        _map_touch.clear()
+        Game.set_slowmo(false)
+
+
+func _zoom_map(f: float) -> void:
+    var fz: float = _fit_zoom()
+    map_zoom = clampf(map_zoom * f, fz * 0.7, fz * 7.0)
+
+
+func _map_rect() -> Rect2:
+    return Rect2(Vector2(30, 30), size - Vector2(60, 60))
+
+
+func _map_press(idx: int, p: Vector2) -> void:
+    var r: Rect2 = _map_rect()
+    var close_c: Vector2 = Vector2(r.end.x - 40.0, r.position.y + 40.0)
+    if p.distance_to(close_c) < 34.0:
+        close_map()
+        return
+    var zin_c: Vector2 = Vector2(r.end.x - 40.0, r.get_center().y - 44.0)
+    var zout_c: Vector2 = Vector2(r.end.x - 40.0, r.get_center().y + 44.0)
+    if p.distance_to(zin_c) < 30.0:
+        _zoom_map(1.4)
+        return
+    if p.distance_to(zout_c) < 30.0:
+        _zoom_map(0.71)
+        return
+    _map_touch[idx] = p
+    _pinch_d = 0.0
+
+
+func _map_drag(idx: int, p: Vector2, rel: Vector2) -> void:
+    if not _map_touch.has(idx):
+        return
+    _map_touch[idx] = p
+    if _map_touch.size() == 1:
+        map_center -= rel / map_zoom
+        var hh: float = _city_half() + 40.0
+        map_center = Vector2(clampf(map_center.x, -hh, hh), clampf(map_center.y, -hh, hh))
+    elif _map_touch.size() >= 2:
+        var pts: Array = _map_touch.values()
+        var dn: float = (pts[0] as Vector2).distance_to(pts[1] as Vector2)
+        if _pinch_d > 10.0 and dn > 10.0:
+            _zoom_map(dn / _pinch_d)
+        _pinch_d = dn
+
+
+func _w2s(w: Vector2, rect: Rect2, center: Vector2, sc: float) -> Vector2:
+    return rect.get_center() + (w - center) * sc
+
+
+func _fill(world_min: Vector2, world_size: Vector2, rect: Rect2, center: Vector2, sc: float, col: Color) -> void:
+    var r := Rect2(_w2s(world_min, rect, center, sc), world_size * sc)
+    var c: Rect2 = r.intersection(rect)
+    if c.size.x > 0.0 and c.size.y > 0.0:
+        draw_rect(c, col)
+
+
+func _draw_city(rect: Rect2, center: Vector2, sc: float) -> void:
+    draw_rect(rect, Color(0.09, 0.16, 0.09))
+    var hh: float = _city_half()
+    _fill(Vector2(-hh, -hh), Vector2(hh * 2.0, hh * 2.0), rect, center, sc, Color(0.27, 0.27, 0.3))
+    var blk: float = Const.PITCH - Const.ROAD_W
+    for bj in range(Const.N - 1):
+        for bk in range(Const.N - 1):
+            var a: Vector3 = Const.node_pos(bj, bk)
+            var b: Vector3 = Const.node_pos(bj + 1, bk + 1)
+            var cc: Vector3 = (a + b) * 0.5
+            _fill(Vector2(cc.x - blk * 0.5, cc.z - blk * 0.5), Vector2(blk, blk), rect, center, sc, Color(0.2, 0.29, 0.2))
+
+
+func _draw_arrow(c: Vector2, heading: Vector2, s: float) -> void:
+    var tip: Vector2 = c + heading * s
+    var l: Vector2 = c + heading.rotated(2.5) * s * 0.75
+    var r: Vector2 = c + heading.rotated(-2.5) * s * 0.75
+    var pts := PackedVector2Array([tip, l, c - heading * s * 0.2, r])
+    draw_colored_polygon(pts, Color(1, 1, 1))
+    draw_polyline(PackedVector2Array([tip, l, c - heading * s * 0.2, r, tip]), Color(0, 0, 0, 0.8), 2.0)
+
+
+func _draw_minimap() -> void:
+    var rect: Rect2 = _mm_rect()
+    var center: Vector2 = _player_pos2()
+    var sc: float = MM_SIZE / 260.0
+    _draw_city(rect, center, sc)
+    draw_rect(rect, Color(1, 1, 1, 0.55), false, 2.0)
+    _draw_arrow(rect.get_center(), _player_heading(), 11.0)
+
+
+func _draw_fullmap() -> void:
+    draw_rect(Rect2(Vector2.ZERO, size), Color(0, 0, 0, 0.8))
+    var rect: Rect2 = _map_rect()
+    _draw_city(rect, map_center, map_zoom)
+    draw_rect(rect, Color(1, 1, 1, 0.6), false, 3.0)
+    var pp: Vector2 = _w2s(_player_pos2(), rect, map_center, map_zoom)
+    if rect.has_point(pp):
+        _draw_arrow(pp, _player_heading(), 16.0)
+    var close_c: Vector2 = Vector2(rect.end.x - 40.0, rect.position.y + 40.0)
+    draw_circle(close_c, 28.0, Color(0, 0, 0, 0.6))
+    draw_arc(close_c, 28.0, 0.0, TAU, 32, Color(1, 1, 1, 0.8), 2.5, true)
+    draw_line(close_c + Vector2(-9, -9), close_c + Vector2(9, 9), Color(1, 1, 1), 3.0)
+    draw_line(close_c + Vector2(-9, 9), close_c + Vector2(9, -9), Color(1, 1, 1), 3.0)
+    var zin_c: Vector2 = Vector2(rect.end.x - 40.0, rect.get_center().y - 44.0)
+    var zout_c: Vector2 = Vector2(rect.end.x - 40.0, rect.get_center().y + 44.0)
+    for z in [zin_c, zout_c]:
+        draw_circle(z, 26.0, Color(0, 0, 0, 0.6))
+        draw_arc(z, 26.0, 0.0, TAU, 32, Color(1, 1, 1, 0.8), 2.5, true)
+    draw_line(zin_c + Vector2(-10, 0), zin_c + Vector2(10, 0), Color(1, 1, 1), 3.0)
+    draw_line(zin_c + Vector2(0, -10), zin_c + Vector2(0, 10), Color(1, 1, 1), 3.0)
+    draw_line(zout_c + Vector2(-10, 0), zout_c + Vector2(10, 0), Color(1, 1, 1), 3.0)
+    draw_string(_font, Vector2(rect.position.x + 16.0, rect.position.y + 30.0), "КАРТА", HORIZONTAL_ALIGNMENT_LEFT, -1, 22, Color(1, 1, 1, 0.85))
 
 
 # ---------- круговое меню оружия ----------
@@ -296,6 +485,7 @@ func _process(delta: float) -> void:
         _car_mode = car
         _release_all()
         close_wheel()
+        close_map()
     if size.x < 100.0 or size.y < 100.0:
         position = Vector2.ZERO
         size = get_viewport_rect().size
@@ -309,22 +499,22 @@ func _draw() -> void:
     if Game.player == null or _btns.is_empty():
         return
     var w: float = size.x
-    var h: float = size.y
     _draw_bars()
+    _draw_minimap()
     if not _car_mode:
         var c: Vector2 = size * 0.5
         draw_arc(c, 3.6, 0.0, TAU, 16, Color(0, 0, 0, 0.55), 2.0, true)
         draw_circle(c, 2.4, Color(1, 1, 1, 0.95))
         if Game.prompt != "":
             draw_arc(c, 9.0, 0.0, TAU, 24, Color(1, 1, 1, 0.8), 1.6, true)
-    _draw_joystick(h)
+        if bool(Game.player.ads):
+            draw_arc(c, 16.0, 0.0, TAU, 32, Color(1, 1, 1, 0.5), 1.4, true)
+    _draw_joystick(size.y)
     for b in _btns:
         if _active(str(b["id"])):
             _draw_btn(b)
-    if Game.prompt != "":
-        var tw: float = 460.0
-        draw_string(_font, Vector2(size.x * 0.5 - tw * 0.5 + 1.0, size.y * 0.5 + 56.0), Game.prompt, HORIZONTAL_ALIGNMENT_CENTER, tw, 22, Color(0, 0, 0, 0.7))
-        draw_string(_font, Vector2(size.x * 0.5 - tw * 0.5, size.y * 0.5 + 55.0), Game.prompt, HORIZONTAL_ALIGNMENT_CENTER, tw, 22, Color(1, 1, 1, 0.95))
+    if _car_mode:
+        _draw_speedometer()
     var ty: float = 100.0
     for t in _toasts:
         var a: float = clampf(3.0 - float(t["age"]), 0.0, 1.0)
@@ -334,15 +524,17 @@ func _draw() -> void:
         draw_rect(Rect2(Vector2.ZERO, size), Color(0.8, 0.0, 0.0, _flash_t * 0.35))
     if wheel_open:
         _draw_wheel()
+    if map_open:
+        _draw_fullmap()
 
 
 func _draw_bars() -> void:
     var hp: float = clampf(float(Game.player.hp) / 100.0, 0.0, 1.0)
     draw_rect(Rect2(28, 24, 224, 14), Color(0, 0, 0, 0.5))
     draw_rect(Rect2(30, 26, 220.0 * hp, 10), Color(0.85 - 0.5 * hp, 0.2 + 0.6 * hp, 0.2))
-    var y: float = 62.0
+    draw_string(_font, Vector2(260, 38), str(int(ceil(float(Game.player.hp)))), HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color(1, 1, 1, 0.95))
     if Settings.show_fps:
-        draw_string(_font, Vector2(30, y), "FPS %d" % Engine.get_frames_per_second(), HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(1, 1, 1, 0.7))
+        draw_string(_font, Vector2(30, MM_POS.y + MM_SIZE + 22.0), "FPS %d" % Engine.get_frames_per_second(), HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(1, 1, 1, 0.7))
     if Game.equipped != "" and not _car_mode:
         var wd: Dictionary = WeaponDefs.get_def(Game.equipped)
         var txt: String = str(wd["name"])
@@ -350,6 +542,35 @@ func _draw_bars() -> void:
             var st: Dictionary = Game.owned[Game.equipped]
             txt += "   %d / %d" % [int(st["mag"]), int(st["reserve"])]
         draw_string(_font, Vector2(size.x - 420.0, 124.0), txt, HORIZONTAL_ALIGNMENT_RIGHT, 400.0, 22, Color(1, 1, 1, 0.9))
+
+
+func _draw_speedometer() -> void:
+    var v: Vehicle = Game.player.in_vehicle as Vehicle
+    if v == null:
+        return
+    var kmh: float = absf(v.speed_ms) * 3.6
+    var max_kmh: float = ceilf(float(v.def["vmax"]) * 3.6 / 20.0) * 20.0
+    var c: Vector2 = Vector2(size.x * 0.5, size.y - 92.0)
+    var r: float = 74.0
+    var a0: float = PI * 0.75
+    var a1: float = PI * 2.25
+    draw_circle(c, r + 6.0, Color(0, 0, 0, 0.45))
+    draw_arc(c, r, a0, a1, 64, Color(1, 1, 1, 0.35), 3.0, true)
+    var step: float = 20.0 if max_kmh <= 200.0 else 40.0
+    var s: float = 0.0
+    while s <= max_kmh + 0.1:
+        var a: float = a0 + (a1 - a0) * (s / max_kmh)
+        var dirv: Vector2 = Vector2(cos(a), sin(a))
+        draw_line(c + dirv * (r - 9.0), c + dirv * r, Color(1, 1, 1, 0.8), 2.0)
+        if int(s) % int(step * 2.0) == 0:
+            var tp: Vector2 = c + dirv * (r - 22.0)
+            draw_string(_font, tp - Vector2(16, -5), str(int(s)), HORIZONTAL_ALIGNMENT_CENTER, 32.0, 12, Color(1, 1, 1, 0.75))
+        s += step
+    var an: float = a0 + (a1 - a0) * clampf(kmh / max_kmh, 0.0, 1.0)
+    draw_line(c, c + Vector2(cos(an), sin(an)) * (r - 12.0), Color(1.0, 0.35, 0.15), 3.0)
+    draw_circle(c, 5.0, Color(1, 1, 1))
+    draw_string(_font, Vector2(c.x - 50.0, c.y + 34.0), str(int(round(kmh))), HORIZONTAL_ALIGNMENT_CENTER, 100.0, 30, Color(1, 1, 1))
+    draw_string(_font, Vector2(c.x - 40.0, c.y + 52.0), "км/ч", HORIZONTAL_ALIGNMENT_CENTER, 80.0, 13, Color(1, 1, 1, 0.7))
 
 
 func _draw_joystick(h: float) -> void:

@@ -10,6 +10,7 @@ var player = null
 var hud = null
 var traffic = null
 var npc_mgr = null
+var skids = null
 var world: Node3D = null
 var ped_net: PedNet = null
 var light_time: float = 0.0
@@ -28,6 +29,7 @@ func reset() -> void:
     hud = null
     traffic = null
     npc_mgr = null
+    skids = null
     world = null
     ped_net = null
     light_time = 0.0

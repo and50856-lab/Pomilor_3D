@@ -56,6 +56,14 @@ var target_vehicle: Vehicle = null
 var _prev_vy: float = 0.0
 var _was_floor: bool = true
 var _auto_reload_t: float = -1.0
+var last_damage_t: float = -100.0
+var punch_left: bool = false
+var ads: bool = false
+var ads_t: float = 0.0
+var aim_t: float = 0.0
+var aim_cd: float = 0.0
+var muzzle_light: OmniLight3D
+var vm_ads_pos: Vector3 = Vector3(0.0, -0.14, -0.3)
 
 
 func _ready() -> void:
@@ -90,6 +98,13 @@ func _ready() -> void:
     cam.fov = Settings.fov
     arm.add_child(cam)
     Settings.register_camera(cam)
+    muzzle_light = OmniLight3D.new()
+    muzzle_light.light_color = Color(1.0, 0.75, 0.4)
+    muzzle_light.omni_range = 9.0
+    muzzle_light.light_energy = 0.0
+    muzzle_light.shadow_enabled = false
+    muzzle_light.position = Vector3(0, 0, -0.9)
+    head.add_child(muzzle_light)
 
     cam_rig = Node3D.new()
     cam_rig.top_level = true
@@ -153,7 +168,8 @@ func _apply_view_mode() -> void:
     arm.spring_length = 3.2 if third else 0.0
     arm.position = Vector3.ZERO
     rig.visible = true
-    rig.set_shadow_only(not third)
+    rig.set_shadow_only(false)
+    rig.set_fp_mode(not third)
     vm.visible = (not third) and not dead
 
 
@@ -162,7 +178,11 @@ func _apply_view_mode() -> void:
 func _process(delta: float) -> void:
     var lk: Vector2 = Ctl.take_look()
     var sens: float = 0.0032 * Settings.sensitivity
-    cam.fov = Settings.fov
+    ads_t = move_toward(ads_t, 1.0 if ads else 0.0, delta * 6.0)
+    sens *= lerpf(1.0, 0.6, ads_t)
+    cam.fov = lerpf(Settings.fov, Settings.fov * 0.72, ads_t)
+    if third:
+        arm.spring_length = lerpf(3.2, 2.0, ads_t)
     if in_vehicle != null:
         _car_camera(lk, sens, delta)
         return
@@ -229,6 +249,7 @@ func _physics_process(delta: float) -> void:
     fire_cd = maxf(0.0, fire_cd - delta)
     busy_t = maxf(0.0, busy_t - delta)
     if in_vehicle != null:
+        _regen(delta)
         var v: Vehicle = in_vehicle
         v.in_throttle = Ctl.gas - Ctl.rev
         v.in_steer = Ctl.steer
@@ -244,9 +265,12 @@ func _physics_process(delta: float) -> void:
         return
     if dead:
         return
+    _regen(delta)
+    _update_ads()
     _find_targets()
     _move(delta)
     _weapon_logic(delta)
+    _aim_check(delta)
 
 
 func _move(delta: float) -> void:
@@ -295,19 +319,32 @@ func _find_targets() -> void:
     Game.prompt_btn = ""
     if busy_t > 0.0:
         return
-    var from: Vector3 = cam.global_position
+    var from: Vector3 = head.global_position
     var d: Vector3 = -cam.global_transform.basis.z
     var q := PhysicsRayQueryParameters3D.create(from, from + d * 3.4, Const.L_ITEM)
     var hit: Dictionary = get_world_3d().direct_space_state.intersect_ray(q)
+    var pk: Pickup = null
     if not hit.is_empty() and hit["collider"] is Pickup:
-        target_pickup = hit["collider"]
+        pk = hit["collider"]
+    else:
+        var best_p: float = 1.7
+        for pn in get_tree().get_nodes_in_group("pickups"):
+            var cand: Pickup = pn as Pickup
+            if cand == null:
+                continue
+            var dp: float = cand.global_position.distance_to(global_position + Vector3(0, 0.5, 0))
+            if dp < best_p:
+                best_p = dp
+                pk = cand
+    if pk != null:
+        target_pickup = pk
         Game.prompt = "%s: подобрать" % target_pickup.display_name()
         Game.prompt_btn = "ВЗЯТЬ"
         return
     var best: float = 1000.0
     for n in get_tree().get_nodes_in_group("vehicles"):
         var v: Vehicle = n as Vehicle
-        if v == null:
+        if v == null or v.wrecked:
             continue
         var dd: float = Vector2(v.global_position.x - global_position.x, v.global_position.z - global_position.z).length()
         if dd < v.half_len + 1.2 and dd < best and absf(v.global_position.y - global_position.y) < 3.0:
@@ -344,7 +381,7 @@ func _enter_vehicle(v: Vehicle) -> void:
     busy_t = 2.4
     Game.prompt = ""
     var npc = v.driver_npc
-    if v.mode == Vehicle.Mode.AI_LANE:
+    if v.mode == Vehicle.Mode.AI_LANE or v.mode == Vehicle.Mode.AI_PHYS:
         if v.ai != null:
             v.ai.cruise = 0.0
             v.ai.speed = 0.0
@@ -503,8 +540,10 @@ func _start_anim(k: String, dur: float) -> void:
 
 func _punch() -> void:
     fire_cd = 0.45
-    _start_anim("punch", 0.35)
-    rig.play("punch", 0.35)
+    var left: bool = punch_left
+    punch_left = not punch_left
+    _start_anim("punch_l" if left else "punch", 0.35)
+    rig.play("punch_l" if left else "punch", 0.35)
     Sfx.play3d("swing", global_position, -8.0, 1.2, 25.0)
     await get_tree().create_timer(0.12).timeout
     if dead or in_vehicle != null or not is_inside_tree():
@@ -546,24 +585,28 @@ func _shoot(wd: Dictionary, kind: String) -> void:
         Game.gunshot.emit(origin, float(wd["loud"]))
     else:
         var ex: Array[RID] = []
-        Combat.fire_gun(self, origin, dir, wd, ex)
+        var wd2: Dictionary = wd.duplicate()
+        if ads:
+            wd2["spread"] = float(wd["spread"]) * 0.4
+        Combat.fire_gun(self, origin, dir, wd2, ex)
     Sfx.play3d(str(wd["snd"]), origin, 0.0, randf_range(0.97, 1.03), 230.0)
     kick = 1.0
     var rc: float = deg_to_rad(float(wd["recoil"]))
     cam_pitch = minf(cam_pitch + rc * 0.4 * randf_range(0.7, 1.2), 1.35)
     cam_yaw += randf_range(-0.3, 0.3) * rc * 0.3
     rig.play("recoil", 0.15)
-    if not third and vm_muzzle != null and is_instance_valid(vm_muzzle):
-        Effects.muzzle_flash(vm_muzzle)
-    else:
-        var m: Node3D = rig.weapon_muzzle()
-        if m != null:
-            Effects.muzzle_flash(m)
+    _flash()
     if id == "mossberg":
         var t: SceneTreeTimer = get_tree().create_timer(0.45)
         t.timeout.connect(func() -> void: Sfx.play2d("pump", -4.0))
     if int(st["mag"]) == 0 and int(st["reserve"]) > 0:
         _auto_reload_t = 0.5
+
+
+func _flash() -> void:
+    muzzle_light.light_energy = 4.0
+    var tw: Tween = create_tween()
+    tw.tween_property(muzzle_light, "light_energy", 0.0, 0.07)
 
 
 func start_reload() -> void:
@@ -619,11 +662,93 @@ func take_damage(dmg: float, _dir: Vector3) -> void:
     if dead:
         return
     hp -= dmg
+    last_damage_t = float(Time.get_ticks_msec()) / 1000.0
     if Game.hud != null:
         Game.hud.call("flash")
     Sfx.play3d("pain", global_position, 0.0, 0.8, 30.0)
     if hp <= 0.0:
         _die()
+
+
+func _regen(delta: float) -> void:
+    var now: float = float(Time.get_ticks_msec()) / 1000.0
+    if hp < 100.0 and not dead and now - last_damage_t > 5.0:
+        hp = minf(100.0, hp + 5.0 * delta)
+
+
+func _update_ads() -> void:
+    var k: String = ""
+    if Game.equipped != "":
+        k = str(WeaponDefs.get_def(Game.equipped).get("kind", ""))
+    ads = Ctl.aim and (k == "gun" or k == "rocket") and busy_t <= 0.0 and not reloading
+    rig.ads = ads
+
+
+# Если навести оружие на человека или на водителя — он реагирует (руки вверх, бегство, уезжает).
+func _aim_check(delta: float) -> void:
+    aim_cd -= delta
+    if Game.equipped == "" or aim_cd > 0.0:
+        return
+    var k: String = str(WeaponDefs.get_def(Game.equipped).get("kind", ""))
+    if k != "gun" and k != "rocket":
+        aim_t = 0.0
+        return
+    aim_cd = 0.15
+    var origin: Vector3 = cam.global_position
+    var dir: Vector3 = -cam.global_transform.basis.z
+    var end: Vector3 = origin + dir * 28.0
+    var q := PhysicsRayQueryParameters3D.create(origin, end, Const.L_WORLD | Const.L_VEH)
+    var hit: Dictionary = get_world_3d().direct_space_state.intersect_ray(q)
+    var world_end: Vector3 = end
+    if not hit.is_empty():
+        world_end = hit["position"]
+    var target = null
+    var nh: Dictionary = Combat.ray_npc(origin, world_end)
+    if not nh.is_empty():
+        target = nh["npc"]
+    elif not hit.is_empty() and hit["collider"] is Vehicle:
+        var v: Vehicle = hit["collider"]
+        if v.driver_npc != null and is_instance_valid(v.driver_npc) and not v.wrecked:
+            target = v.driver_npc
+    if target == null:
+        aim_t = 0.0
+        return
+    aim_t += 0.15
+    if aim_t >= 0.4:
+        aim_t = 0.0
+        aim_cd = 1.5
+        target.call("on_aimed_at", self)
+
+
+func force_exit_vehicle() -> void:
+    if in_vehicle == null:
+        return
+    var v: Vehicle = in_vehicle
+    _leave_vehicle_to(v.exit_position(-1.0) + Vector3(0, 0.5, 0))
+    busy_t = 0.5
+
+
+func spawn_npc(_kind: String = "ordinary") -> void:
+    var fwd: Vector3 = Vector3(-sin(cam_yaw), 0.0, -cos(cam_yaw))
+    var origin: Vector3 = global_position + Vector3(0, 1.0, 0)
+    var p: Vector3 = global_position + fwd * 4.0
+    var space: PhysicsDirectSpaceState3D = get_world_3d().direct_space_state
+    var wq := PhysicsRayQueryParameters3D.create(origin, origin + fwd * 4.5, Const.L_WORLD)
+    var wh: Dictionary = space.intersect_ray(wq)
+    if not wh.is_empty():
+        var hp_: Vector3 = wh["position"]
+        p = hp_ - fwd * 1.0
+    var gq := PhysicsRayQueryParameters3D.create(p + Vector3(0, 3.0, 0), p - Vector3(0, 6.0, 0), Const.L_WORLD)
+    var gh: Dictionary = space.intersect_ray(gq)
+    var gy: float = global_position.y
+    if not gh.is_empty():
+        var gp: Vector3 = gh["position"]
+        gy = gp.y
+    var npc: NPC = NPC.create()
+    Game.world.add_child(npc)
+    npc.place_at(Vector3(p.x, gy + 0.1, p.z))
+    Sfx.play2d("click")
+    Game.say("Появился: Ordinary NPC")
 
 
 func _die() -> void:
@@ -683,7 +808,8 @@ func _refresh_weapon() -> void:
     var id: String = Game.equipped
     if rig != null:
         rig.set_weapon(id)
-        rig.set_shadow_only(not third)
+        rig.set_shadow_only(false)
+        rig.set_fp_mode(not third)
     for c in vm_r.get_children():
         c.queue_free()
     for c in vm_l.get_children():
@@ -692,6 +818,7 @@ func _refresh_weapon() -> void:
     var skin: Color = rig.skin
     var sleeve: Color = rig.shirt
     vm_r_rot = Vector3.ZERO
+    vm_ads_pos = Vector3(0.0, -0.14, -0.3)
     var two: bool = false
     var left_off: Vector3 = Vector3.ZERO
     if id == "":
@@ -707,16 +834,20 @@ func _refresh_weapon() -> void:
         match id:
             "deagle":
                 vm_r_base = Vector3(0.17, -0.19, -0.42)
+                vm_ads_pos = Vector3(0.0, -0.12, -0.3)
             "ak47":
                 vm_r_base = Vector3(0.16, -0.21, -0.38)
+                vm_ads_pos = Vector3(0.0, -0.15, -0.28)
                 left_off = Vector3(-0.15, 0.0, -0.33)
                 two = true
             "mossberg":
                 vm_r_base = Vector3(0.16, -0.21, -0.38)
+                vm_ads_pos = Vector3(0.0, -0.15, -0.3)
                 left_off = Vector3(-0.14, -0.02, -0.34)
                 two = true
             "rpg":
                 vm_r_base = Vector3(0.2, -0.27, -0.3)
+                vm_ads_pos = Vector3(0.0, -0.16, -0.24)
                 left_off = Vector3(-0.28, 0.05, -0.3)
                 two = true
             "bat":
@@ -743,12 +874,15 @@ func _animate_viewmodel(delta: float, hs: float) -> void:
     if anim_p < 1.0:
         anim_p = minf(1.0, anim_p + delta / maxf(anim_dur, 0.05))
     var ph: float = sin(anim_p * PI) if anim_p < 1.0 else 0.0
-    var pos_r: Vector3 = vm_r_base + Vector3(0.0, 0.0, kick * 0.07)
+    var ads_off: Vector3 = (vm_ads_pos - vm_r_base) * ads_t
+    var pos_r: Vector3 = vm_r_base + ads_off + Vector3(0.0, 0.0, kick * 0.07)
     var rot_r: Vector3 = vm_r_rot + Vector3(kick * 0.15, 0.0, 0.0)
-    var pos_l: Vector3 = vm_l_base + Vector3(0.0, 0.0, kick * 0.05)
+    var pos_l: Vector3 = vm_l_base + ads_off + Vector3(0.0, 0.0, kick * 0.05)
     match anim_kind:
         "punch":
             pos_r += Vector3(0.0, 0.05 * ph, -0.4 * ph)
+        "punch_l":
+            pos_l += Vector3(0.0, 0.05 * ph, -0.4 * ph)
         "swing":
             rot_r += Vector3(-1.3 * ph, 0.0, 0.6 * ph)
         "throw":

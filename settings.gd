@@ -22,6 +22,10 @@ const ANIM_DIST: Array = [40.0, 60.0, 90.0, 140.0, 250.0]
 const SEG_RADIAL: Array = [6, 8, 10, 12, 16]
 const SEG_RINGS: Array = [2, 3, 4, 5, 6]
 const LAMP_SEG: Array = [4, 6, 8, 12, 16]
+const SKID_CAP: Array = [40, 100, 250, 500, 1000]
+const SMOKE_AMOUNT: Array = [4, 8, 14, 26, 48]
+const HOLE_CAP: Array = [8, 20, 50, 120, 300]
+const PHYS_CARS: Array = [4, 6, 8, 12, 16]
 const TEX_SIZE: Array = [128, 256, 256, 512, 1024]
 const PART_SCALE: Array = [0.3, 0.5, 0.8, 1.0, 1.4]
 
@@ -233,7 +237,7 @@ func _apply_environment() -> void:
     if env == null:
         return
     var fp: bool = is_forward_plus()
-    env.tonemap_mode = Environment.TONE_MAPPER_ACES
+    env.tonemap_mode = Environment.TONE_MAPPER_FILMIC if graphics < 2 else Environment.TONE_MAPPER_ACES
     env.tonemap_exposure = 1.0
     env.tonemap_white = 6.0
     env.glow_enabled = bloom and graphics >= 1
@@ -244,13 +248,10 @@ func _apply_environment() -> void:
     env.glow_blend_mode = Environment.GLOW_BLEND_MODE_SOFTLIGHT
     for i in range(7):
         env.set_glow_level(i, 1.0 if i < 2 + graphics else 0.0)
-    env.adjustment_enabled = graphics >= 3
-    env.adjustment_contrast = 1.06
-    env.adjustment_saturation = 1.1
-    env.fog_enabled = true
-    env.fog_density = 2.6 / view_far()
-    env.fog_sky_affect = 0.25
-    env.fog_light_color = Color(0.72, 0.8, 0.9)
+    env.adjustment_enabled = true
+    env.adjustment_contrast = 1.1
+    env.adjustment_saturation = 1.2
+    env.fog_enabled = false
     env.ssao_enabled = fp and graphics >= 2
     env.ssil_enabled = fp and graphics >= 4
     env.ssr_enabled = fp and graphics >= 3
@@ -283,5 +284,3 @@ func _apply_view_distance() -> void:
             (c as Camera3D).far = far
     if is_inside_tree():
         get_tree().call_group("vis_range", "set", "visibility_range_end", far)
-        if env != null:
-            env.fog_density = 2.6 / far

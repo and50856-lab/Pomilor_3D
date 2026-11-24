@@ -39,6 +39,8 @@ var wounded: String = ""
 var dead: bool = false
 var honk_t: float = 0.0
 var pitch_aim: float = 0.0
+var hands_up: bool = false
+var ads: bool = false
 
 var _cycle: float = 0.0
 var _time: float = 0.0
@@ -220,6 +222,29 @@ func die(_dir: Vector3) -> void:
     hips.position.y = HIP_Y
 
 
+func go_limp() -> void:
+    dead = true
+    arm_l.rotation = Vector3(0.4, 0.0, 0.7)
+    arm_r.rotation = Vector3(-0.3, 0.0, -0.8)
+    fore_l.rotation = Vector3(-0.4, 0, 0)
+    fore_r.rotation = Vector3(-0.3, 0, 0)
+    leg_l.rotation = Vector3(0.1, 0, 0.15)
+    leg_r.rotation = Vector3(-0.1, 0, -0.2)
+    shin_l.rotation = Vector3.ZERO
+    shin_r.rotation = Vector3(-0.2, 0, 0)
+    torso.rotation = Vector3.ZERO
+    head.rotation = Vector3(0.0, 0.5, 0.2)
+    hips.position.y = HIP_Y
+    hips.rotation = Vector3.ZERO
+
+
+# Вид от первого лица: голову и руки прячем (руки рисует viewmodel), туловище и ноги видны, если смотреть вниз.
+func set_fp_mode(on: bool) -> void:
+    head.visible = not on
+    arm_l.visible = not on
+    arm_r.visible = not on
+
+
 func _rot(n: Node3D, x: float, y: float, z: float, k: float) -> void:
     var r: Vector3 = n.rotation
     n.rotation = Vector3(lerpf(r.x, x, k), lerpf(r.y, y, k), lerpf(r.z, z, k))
@@ -309,6 +334,17 @@ func _process(delta: float) -> void:
         flx = -0.4
         tors_x = -0.2
 
+    if aim == 1 or aim == 2:
+        if ads:
+            arx += 0.14
+    if hands_up:
+        alx = 2.75 + sin(_time * 9.0) * 0.06
+        arx = 2.75 + sin(_time * 9.0 + 1.0) * 0.06
+        alz = 0.3
+        arz = -0.3
+        flx = -0.3
+        frx = -0.3
+        tors_x = -0.05
     if sitting:
         hip_y = 0.30
         lx = 1.45
@@ -335,6 +371,10 @@ func _process(delta: float) -> void:
                 arx = lerpf(0.5, 1.55, ph)
                 frx = lerpf(-1.6, -0.05, ph)
                 tors_y = -0.4 * ph
+            "punch_l":
+                alx = lerpf(0.5, 1.55, ph)
+                flx = lerpf(-1.6, -0.05, ph)
+                tors_y = 0.4 * ph
             "swing":
                 arx = lerpf(2.6, 0.4, p)
                 frx = -0.5

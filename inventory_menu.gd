@@ -7,6 +7,7 @@ signal closed
 var _content: VBoxContainer
 var _tab_btns: Array = []
 var _tab: int = 0
+var _opened_at: int = 0
 
 
 func _ready() -> void:
@@ -30,7 +31,7 @@ func _ready() -> void:
     var top := HBoxContainer.new()
     top.add_theme_constant_override("separation", 10)
     root.add_child(top)
-    var names: Array = ["Оружия", "Машины", "Настройки"]
+    var names: Array = ["Оружия", "Машины", "NPC", "Настройки"]
     for i in names.size():
         var b: Button = UI.button(str(names[i]), Vector2(190, 56), 24)
         b.pressed.connect(_show_tab.bind(i))
@@ -40,7 +41,7 @@ func _ready() -> void:
     sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     top.add_child(sp)
     var close: Button = UI.button("Закрыть", Vector2(170, 56), 24)
-    close.pressed.connect(func() -> void: closed.emit())
+    close.pressed.connect(_try_close)
     top.add_child(close)
 
     _content = VBoxContainer.new()
@@ -52,7 +53,19 @@ func _ready() -> void:
 
 
 func open() -> void:
+    _opened_at = Time.get_ticks_msec()
     _show_tab(_tab)
+
+
+# Палец, нажавший «ВЕЩИ», отпускается уже над меню: первые доли секунды нажатия игнорируем.
+func _just_opened() -> bool:
+    return Time.get_ticks_msec() - _opened_at < 450
+
+
+func _try_close() -> void:
+    if _just_opened():
+        return
+    closed.emit()
 
 
 func _clear() -> void:
@@ -71,6 +84,8 @@ func _show_tab(i: int) -> void:
         1:
             _build_cars()
         2:
+            _build_npc()
+        3:
             _build_settings()
 
 
@@ -105,6 +120,8 @@ func _update_weapon_card(card: Card) -> void:
 
 
 func _on_weapon(card: Card) -> void:
+    if _just_opened():
+        return
     Game.give_weapon(card.item_id)
     Game.equip(card.item_id)
     Sfx.play2d("pickup")
@@ -129,13 +146,41 @@ func _build_cars() -> void:
         row.add_child(card)
 
 
+func _build_npc() -> void:
+    _content.add_child(_hint("Нажми на человека: он появится перед тобой и пойдёт по своим делам."))
+    var row := HBoxContainer.new()
+    row.alignment = BoxContainer.ALIGNMENT_CENTER
+    row.add_theme_constant_override("separation", 18)
+    _content.add_child(row)
+    var card := Card.new()
+    card.kind = "npc"
+    card.item_id = "ordinary"
+    card.title = "Ordinary NPC"
+    card.sub = "Обычный прохожий"
+    card.custom_minimum_size = Vector2(280, 270)
+    card.pressed.connect(_on_npc.bind("ordinary"))
+    row.add_child(card)
+
+
+func _on_npc(kind: String) -> void:
+    if _just_opened():
+        return
+    if Game.player != null:
+        Game.player.call("spawn_npc", kind)
+    closed.emit()
+
+
 func _on_car(id: String) -> void:
+    if _just_opened():
+        return
     if Game.player != null:
         Game.player.call("spawn_vehicle", id)
     closed.emit()
 
 
 func _on_drop() -> void:
+    if _just_opened():
+        return
     Ctl.action.emit("drop")
     closed.emit()
 

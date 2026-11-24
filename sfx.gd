@@ -5,7 +5,7 @@ const RATE: int = 22050
 const NAMES: Array = [
     "step", "jump", "land", "door_open", "door_close", "deagle", "rifle", "shotgun", "pump",
     "rpg", "explosion", "reload", "empty", "swing", "punch", "bat_hit", "pain", "scream",
-    "horn", "crash", "pickup", "click", "engine", "skid",
+    "horn", "crash", "pickup", "click", "engine", "skid", "pop",
 ]
 
 var sounds: Dictionary = {}
@@ -231,6 +231,10 @@ func _synth(n: String) -> AudioStreamWAV:
         "pickup":
             b = _buf(0.18)
             b = _tone(b, 0.0, 0.14, 500.0, 900.0, 0.5, 12.0)
+        "pop":
+            b = _buf(0.3)
+            b = _noise(b, 0.0, 0.25, 1.0, 14.0, 0.5)
+            b = _tone(b, 0.0, 0.1, 220.0, 90.0, 0.7, 20.0)
         "click":
             b = _buf(0.06)
             b = _tone(b, 0.0, 0.04, 1200.0, 900.0, 0.5, 60.0)

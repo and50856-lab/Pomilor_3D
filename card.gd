@@ -55,6 +55,8 @@ func _draw() -> void:
     var c: Vector2 = Vector2(size.x * 0.5, size.y * 0.38)
     if kind == "weapon":
         Icons.draw_weapon(self, item_id, c, size.x * 0.36, Color(1, 1, 1, 0.95))
+    elif kind == "npc":
+        Icons.draw_person(self, c + Vector2(0, 20), size.x * 0.28, Color(0.9, 0.9, 0.92))
     else:
         var col: Color = Color(0.9, 0.9, 0.92)
         var d: Dictionary = VehicleDefs.get_def(item_id)

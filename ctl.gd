@@ -11,6 +11,7 @@ var t_right: bool = false
 var t_gas: bool = false
 var t_rev: bool = false
 var t_hand: bool = false
+var t_aim: bool = false
 
 var move: Vector2 = Vector2.ZERO
 var run: bool = false
@@ -19,6 +20,7 @@ var steer: float = 0.0
 var gas: float = 0.0
 var rev: float = 0.0
 var handbrake: bool = false
+var aim: bool = false
 var look: Vector2 = Vector2.ZERO
 
 var _rmb: bool = false
@@ -59,6 +61,7 @@ func _process(_delta: float) -> void:
     gas = 1.0 if (t_gas or Input.is_physical_key_pressed(KEY_W)) else 0.0
     rev = 1.0 if (t_rev or Input.is_physical_key_pressed(KEY_S)) else 0.0
     handbrake = t_hand or Input.is_physical_key_pressed(KEY_SPACE)
+    aim = t_aim or Input.is_physical_key_pressed(KEY_Z)
 
 
 func _unhandled_input(event: InputEvent) -> void:

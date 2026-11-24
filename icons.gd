@@ -53,6 +53,11 @@ static func draw_weapon(ci: CanvasItem, id: String, c: Vector2, s: float, col: C
             ci.draw_circle(c, s * 0.4, col)
 
 
+static func draw_person(ci: CanvasItem, c: Vector2, s: float, col: Color) -> void:
+    ci.draw_circle(c + Vector2(0, -s * 0.9), s * 0.26, col)
+    _p(ci, c, s, [Vector2(-0.4, -0.55), Vector2(0.4, -0.55), Vector2(0.46, 0.15), Vector2(0.2, 0.15), Vector2(0.2, 0.95), Vector2(-0.2, 0.95), Vector2(-0.2, 0.15), Vector2(-0.46, 0.15)], col)
+
+
 static func draw_fist(ci: CanvasItem, c: Vector2, s: float, col: Color) -> void:
     ci.draw_circle(c + Vector2(0, -s * 0.05), s * 0.42, col)
     for i in 4:

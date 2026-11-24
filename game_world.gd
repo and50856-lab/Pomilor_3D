@@ -96,6 +96,9 @@ func build(cb: Callable) -> void:
     _progress = cb
     Game.reset()
     Game.world = self
+    Effects.reset()
+    Game.skids = SkidMarks.new()
+    add_child(Game.skids)
     _rng.seed = 20260
     _p(0.0, "Звуки")
     while not Sfx.generate_next():
@@ -130,8 +133,11 @@ func build(cb: Callable) -> void:
     await get_tree().process_frame
     await _spawn_people()
     await _spawn_traffic()
-    _p(0.97, "Интерфейс")
+    _p(0.95, "Эффекты")
+    Effects.prewarm(player.global_position + Vector3(0.0, 1.5, -3.0))
     await get_tree().process_frame
+    await get_tree().process_frame
+    _p(0.97, "Интерфейс")
     _make_ui()
     _p(1.0, "Готово")
     await get_tree().process_frame
@@ -239,6 +245,26 @@ func _make_environment() -> void:
 
 
 # ---------- земля, кварталы ----------
+
+var _cyl_shapes: Dictionary = {}
+
+
+# Круглый коллайдер (столб, ствол дерева): теперь о них можно удариться.
+func _cyl_collider(radius: float, height: float, pos: Vector3) -> void:
+    var key: String = "%s_%s" % [radius, height]
+    var sh: CylinderShape3D = null
+    if _cyl_shapes.has(key):
+        sh = _cyl_shapes[key]
+    else:
+        sh = CylinderShape3D.new()
+        sh.radius = radius
+        sh.height = height
+        _cyl_shapes[key] = sh
+    var cs := CollisionShape3D.new()
+    cs.shape = sh
+    cs.position = pos
+    _static.add_child(cs)
+
 
 func _add_box_collider(size: Vector3, pos: Vector3) -> void:
     var cs := CollisionShape3D.new()
@@ -440,6 +466,7 @@ func _make_furniture() -> void:
                         continue
                     var pp: Vector3 = c + Vector3(float(sx) * 5.9, 0.0, float(sz) * 5.9)
                     poles.append(Transform3D(Basis.IDENTITY, Vector3(pp.x, Const.CURB + 2.3, pp.z)))
+                    _cyl_collider(0.12, 4.6, Vector3(pp.x, Const.CURB + 2.3, pp.z))
                     for axis in 2:
                         var face: Vector3 = Vector3(float(sx), 0.0, 0.0) if axis == 0 else Vector3(0.0, 0.0, float(sz))
                         var leg_ok: bool = Const.node_ok(j + sx, k) if axis == 0 else Const.node_ok(j, k + sz)
@@ -486,6 +513,7 @@ func _make_furniture() -> void:
                 for side in [-1.0, 1.0]:
                     var lp: Vector3 = Const.world_pt(axis, mid, lat_c + side * 5.7)
                     lpoles.append(Transform3D(Basis.IDENTITY, Vector3(lp.x, Const.CURB + 3.5, lp.z)))
+                    _cyl_collider(0.12, 7.0, Vector3(lp.x, Const.CURB + 3.5, lp.z))
                     var hp: Vector3 = Const.world_pt(axis, mid, lat_c + side * 5.0)
                     lheads.append(Transform3D(Basis.IDENTITY, Vector3(hp.x, Const.CURB + 7.05, hp.z)))
     var lpm := CylinderMesh.new()
@@ -530,6 +558,7 @@ func _make_trees() -> void:
     var cols: Array = []
     for tp in _tree_pts:
         var p3: Vector3 = tp
+        _cyl_collider(0.22, 3.0, p3 + Vector3(0, 1.5, 0))
         var sc: float = _rng.randf_range(0.85, 1.35)
         trunks.append(Transform3D(Basis.from_scale(Vector3(sc, sc, sc)), p3 + Vector3(0, 1.3 * sc, 0)))
         crowns.append(Transform3D(Basis.from_scale(Vector3(sc, sc, sc)), p3 + Vector3(0, 3.7 * sc, 0)))

@@ -3,7 +3,7 @@ extends CharacterBody3D
 # Пешеход / водитель. Реалистичные реакции: убегает от выстрелов, хромает и держится за рану,
 # дерётся, мстит за угнанную машину, может сесть за руль и быстро уехать.
 
-enum S { WALK, WAIT, CROSSING, FLEE, HURT, FIGHT, DEAD, DRIVER, CHASE, BUSY }
+enum S { WALK, WAIT, CROSSING, FLEE, HURT, FIGHT, DEAD, DRIVER, CHASE, BUSY, HANDS_UP }
 
 var state: int = S.WALK
 var hp: float = 100.0
@@ -29,12 +29,14 @@ var chase_veh: Vehicle = null
 var wait_axis: int = -1
 var lat: float = 0.0
 var panic_scream_cd: float = 0.0
+var aggressive: bool = false
+var punch_left: bool = false
 
 
 static func create() -> NPC:
     var n := NPC.new()
     n.collision_layer = Const.L_CHAR
-    n.collision_mask = Const.L_WORLD
+    n.collision_mask = Const.L_WORLD | Const.L_VEH
     n.floor_snap_length = 0.4
     n.floor_max_angle = deg_to_rad(60.0)
     var cs := CollisionShape3D.new()
@@ -59,6 +61,7 @@ static func create() -> NPC:
     n.rig = rig
     n.add_child(rig)
     n.walk_speed = randf_range(1.2, 1.8)
+    n.aggressive = randf() < 0.45
     n.lat = randf_range(-0.9, 0.9)
     n.add_to_group("npcs")
     n.add_to_group("walkers")
@@ -122,7 +125,7 @@ func eject(pos: Vector3, yaw_: float = 0.0) -> void:
     rig.sitting = false
     rig.scale = Vector3.ONE
     collision_layer = Const.L_CHAR
-    collision_mask = Const.L_WORLD
+    collision_mask = Const.L_WORLD | Const.L_VEH
     cs.set_deferred("disabled", false)
     add_to_group("walkers")
     add_to_group("peds")
@@ -149,9 +152,69 @@ func bail_out(v: Vehicle, scared: bool) -> void:
             _start_flee(v.global_position, 9.0)
 
 
-func on_vehicle_shot(pos: Vector3) -> void:
+func on_vehicle_shot(_pos: Vector3) -> void:
     if state == S.DRIVER and vehicle != null:
+        var v: Vehicle = vehicle
+        if v.mode == Vehicle.Mode.AI_LANE or v.mode == Vehicle.Mode.AI_PHYS:
+            if randf() < 0.5:
+                v.panic()
+                return
         call_deferred("bail_out", vehicle, true)
+
+
+# В водителя целятся: уехать на большой скорости или выйти с поднятыми руками.
+func on_aimed_at(pl: Node3D) -> void:
+    if state == S.DRIVER and vehicle != null:
+        var v: Vehicle = vehicle
+        if randf() < 0.5:
+            v.panic()
+            return
+        v.detach_ai()
+        eject(_side_pos(v), v.global_rotation.y)
+        _hands_up_start(2.8)
+        return
+    if state == S.WALK or state == S.WAIT or state == S.CROSSING:
+        if randf() < 0.35:
+            _start_flee(pl.global_position, 9.0)
+        else:
+            _hands_up_start(randf_range(2.2, 3.4))
+
+
+func _hands_up_start(t: float) -> void:
+    state = S.HANDS_UP
+    state_t = t
+    rig.hands_up = true
+    has_target = false
+    queue.clear()
+
+
+func _hands_up(delta: float) -> void:
+    state_t -= delta
+    _go(global_position, 0.0, delta)
+    var pl: Node3D = Game.player as Node3D
+    if pl != null:
+        _face(pl.global_position, delta)
+    if state_t <= 0.0:
+        rig.hands_up = false
+        _start_flee(pl.global_position if pl != null else global_position, 9.0)
+
+
+func killed_in_car(pos: Vector3) -> void:
+    if state != S.DRIVER:
+        return
+    eject(pos + Vector3(0, 1.0, 0), 0.0)
+    die(Vector3.UP, Vector3(0.0, 6.0, 0.0))
+
+
+func place_at(pos: Vector3) -> void:
+    net = Game.ped_net
+    global_position = pos
+    cur = net.nearest(pos)
+    prev = -1
+    nxt = -1
+    has_target = false
+    state = S.WALK
+    yaw = randf() * TAU
 
 
 func carjacked(v: Vehicle, from_pos: Vector3) -> void:
@@ -194,7 +257,12 @@ func take_hit(part: String, dmg: float, dir: Vector3, shooter) -> void:
     else:
         hp -= dmg * mult
     if hp <= 0.0:
-        die(dir)
+        var mag: float = clampf(dmg * 0.05, 2.0, 12.0)
+        var vel: Vector3 = dir.normalized() * mag + Vector3(0.0, mag * 0.4, 0.0)
+        if shooter != null and is_instance_valid(shooter) and shooter is Vehicle:
+            var sv: Vehicle = shooter
+            vel = -sv.global_transform.basis.z * sv.speed_ms * 0.9 + Vector3(0.0, 3.5, 0.0)
+        die(dir, vel)
         return
     Sfx.play3d("pain", global_position, 0.0, randf_range(0.85, 1.25), 50.0)
     rig.play("hit", 0.3)
@@ -203,8 +271,9 @@ func take_hit(part: String, dmg: float, dir: Vector3, shooter) -> void:
         sp = (shooter as Node3D).global_position
     threat = sp
     if dmg <= 12.0 and shooter == Game.player:
-        # удар кулаком: дать сдачи или убежать
-        if randf() < 0.5 and hp > 40.0:
+        # удар кулаком: характер NPC решает один раз — драться или бежать
+        if aggressive and hp > 40.0:
+            rig.hands_up = false
             state = S.FIGHT
         else:
             _start_flee(sp, 8.0)
@@ -236,7 +305,7 @@ func _driver_hit(part: String, dmg: float, dir: Vector3, shooter) -> void:
     take_hit(part, dmg, dir, shooter)
 
 
-func die(dir: Vector3) -> void:
+func die(dir: Vector3, vel: Vector3 = Vector3.ZERO) -> void:
     if state == S.DEAD:
         return
     state = S.DEAD
@@ -244,14 +313,16 @@ func die(dir: Vector3) -> void:
     remove_from_group("walkers")
     remove_from_group("peds")
     rig.wounded = ""
-    rig.die(dir)
+    rig.hands_up = false
     Sfx.play3d("pain", global_position, 3.0, 0.8, 60.0)
     collision_layer = 0
     cs.set_deferred("disabled", true)
     set_physics_process(false)
-    await get_tree().create_timer(25.0).timeout
-    if is_inside_tree():
-        queue_free()
+    var v: Vector3 = vel
+    if v.length() < 0.1:
+        v = dir.normalized() * 2.0
+    Corpse.make(self, rig, v)
+    queue_free()
 
 
 # ---------- поведение ----------
@@ -264,6 +335,10 @@ func _on_gunshot(pos: Vector3, loud: float) -> void:
     var dist: float = global_position.distance_to(pos)
     if dist > loud * 0.55:
         return
+    if state == S.HANDS_UP:
+        rig.hands_up = false
+        _start_flee(pos, 9.0)
+        return
     if state == S.FLEE:
         threat = pos
         return
@@ -272,6 +347,7 @@ func _on_gunshot(pos: Vector3, loud: float) -> void:
 
 
 func _start_flee(from: Vector3, t: float) -> void:
+    rig.hands_up = false
     state = S.FLEE
     threat = from
     state_t = t
@@ -310,6 +386,8 @@ func _physics_process(delta: float) -> void:
             _chase(delta)
         S.BUSY:
             _go(global_position, 0.0, delta)
+        S.HANDS_UP:
+            _hands_up(delta)
 
 
 func _go(tgt: Vector3, spd: float, delta: float) -> void:
@@ -486,7 +564,8 @@ func _fight(delta: float) -> void:
         _go(global_position, 0.0, delta)
         if punch_cd <= 0.0:
             punch_cd = randf_range(0.9, 1.5)
-            rig.play("punch", 0.35)
+            rig.play("punch_l" if punch_left else "punch", 0.35)
+            punch_left = not punch_left
             Sfx.play3d("punch", global_position, 0.0, randf_range(0.9, 1.1), 30.0)
             Game.player.call("take_damage", 6.0, (pl.global_position - global_position).normalized())
     if dist > 18.0:

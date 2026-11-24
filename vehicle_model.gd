@@ -81,7 +81,7 @@ static func build(id: String, color: Color) -> Dictionary:
     var cab_c: Vector3 = d["cab_c"]
     var width: float = d["width"]
     var length: float = d["length"]
-    var out: Dictionary = {"root": root, "wheels": [], "spins": [], "door": null, "seat": d["seat"], "steer": null}
+    var out: Dictionary = {"root": root, "wheels": [], "spins": [], "tires": [], "door": null, "seat": d["seat"], "steer": null, "paint": null, "glass": null, "fuel": Vector3.ZERO}
 
     var paint: Array = []
     var glass: Array = []
@@ -123,8 +123,12 @@ static func build(id: String, color: Color) -> Dictionary:
         head.append([_mesh_box(Vector3(0.28, 0.14, 0.05)), Vector3(sx * width * 0.34, ly, -length * 0.5 + 0.02), 0.0])
         tail.append([_mesh_box(Vector3(0.24, 0.14, 0.05)), Vector3(sx * width * 0.36, ly, length * 0.5 - 0.02), 0.0])
 
-    root.add_child(_commit(paint, _paint(color), Settings.shadows >= 1))
-    root.add_child(_commit(glass, _glass()))
+    var paint_mi: MeshInstance3D = _commit(paint, _paint(color), Settings.shadows >= 1)
+    root.add_child(paint_mi)
+    var glass_mi: MeshInstance3D = _commit(glass, _glass())
+    root.add_child(glass_mi)
+    out["paint"] = paint_mi
+    out["glass"] = glass_mi
     var dark_mat: StandardMaterial3D = WeaponModel.mat(Color(0.05, 0.05, 0.06), 0.2, 0.7)
     root.add_child(_commit(dark, dark_mat))
     root.add_child(_commit(head, _emit(Color(1.0, 0.95, 0.8), 1.6)))
@@ -180,6 +184,7 @@ static func build(id: String, color: Color) -> Dictionary:
         t.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if Settings.shadows >= 3 else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
         t.visibility_range_end = float(Settings.LOD_PEOPLE[Settings.graphics]) * 1.5
         spin.add_child(t)
+        out["tires"].append(t)
         var rm := MeshInstance3D.new()
         rm.mesh = rim_m
         rm.material_override = rim_mat
@@ -190,6 +195,24 @@ static func build(id: String, color: Color) -> Dictionary:
         root.add_child(wn)
         out["wheels"].append(wn)
         out["spins"].append(spin)
+
+    # лючок бензобака (справа сзади)
+    var fuel_pos: Vector3 = Vector3(width * 0.5 + 0.012, body_c.y + body.y * 0.25, length * 0.5 - 0.75)
+    var fuel := MeshInstance3D.new()
+    var fcm := CylinderMesh.new()
+    fcm.top_radius = 0.08
+    fcm.bottom_radius = 0.08
+    fcm.height = 0.03
+    fcm.radial_segments = 10
+    fcm.rings = 1
+    fuel.mesh = fcm
+    fuel.material_override = WeaponModel.mat(Color(0.18, 0.18, 0.2), 0.6, 0.4)
+    fuel.position = fuel_pos
+    fuel.rotation = Vector3(0.0, 0.0, PI * 0.5)
+    fuel.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+    fuel.visibility_range_end = float(Settings.LOD_SMALL[Settings.graphics]) * 1.3
+    root.add_child(fuel)
+    out["fuel"] = fuel_pos
 
     # руль
     var steer := Node3D.new()
@@ -234,7 +257,7 @@ static func _from_glb(ps: PackedScene, fallback: Dictionary) -> Dictionary:
         spins.append(w)
     var door: Node3D = inst.find_child("Door_L", true, false) as Node3D
     var seat_n: Node3D = inst.find_child("Seat", true, false) as Node3D
-    var out: Dictionary = {"root": root, "wheels": wheels, "spins": spins, "door": door, "seat": fallback["seat"], "steer": null}
+    var out: Dictionary = {"root": root, "wheels": wheels, "spins": spins, "tires": [], "door": door, "seat": fallback["seat"], "steer": null, "paint": null, "glass": null, "fuel": fallback["fuel"]}
     if seat_n != null:
         out["seat"] = seat_n.position
     (fallback["root"] as Node3D).queue_free()

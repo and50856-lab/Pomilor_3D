@@ -92,9 +92,12 @@ static func fire_gun(shooter: Node3D, origin: Vector3, dir: Vector3, wd: Diction
             var col: Object = hit["collider"]
             var pos: Vector3 = hit["position"]
             var nrm: Vector3 = hit["normal"]
+            var hole_parent: Node = null
             if col is Vehicle:
                 (col as Vehicle).shot(pos, d, dmg)
+                hole_parent = col as Node
             Effects.sparks(pos, nrm)
+            Effects.bullet_hole(pos, nrm, hole_parent)
     Game.gunshot.emit(origin, float(wd.get("loud", 100.0)))
 
 
@@ -118,7 +121,7 @@ static func melee_hit(attacker: Node3D, origin: Vector3, fwd: Vector3, reach: fl
     return any
 
 
-static func explode(pos: Vector3, radius: float, dmg: float, attacker) -> void:
+static func explode(pos: Vector3, radius: float, dmg: float, attacker, skip = null, veh_mult: float = 10.0) -> void:
     if Game.world == null:
         return
     Effects.explosion(pos)
@@ -143,10 +146,12 @@ static func explode(pos: Vector3, radius: float, dmg: float, attacker) -> void:
         var v: Vehicle = n as Vehicle
         if v == null:
             continue
+        if skip != null and v == skip:
+            continue
         var dv: float = v.global_position.distance_to(pos)
         if dv < radius * 1.6:
             var f2: float = 1.0 - dv / (radius * 1.6)
-            v.explosion_push((v.global_position - pos).normalized() + Vector3(0, 0.6, 0), f2)
+            v.blast((v.global_position - pos).normalized() + Vector3(0, 0.6, 0), f2, dmg * veh_mult)
     for n in tree.get_nodes_in_group("pickups"):
         var rb: RigidBody3D = n as RigidBody3D
         if rb != null and rb.global_position.distance_to(pos) < radius:

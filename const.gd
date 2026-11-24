@@ -7,6 +7,7 @@ const L_CHAR: int = 2
 const L_VEH: int = 4
 const L_HIT: int = 8
 const L_ITEM: int = 16
+const L_BODY: int = 32
 
 # Сетка города. axis 0 = движение вдоль X, axis 1 = вдоль Z
 const N: int = 7

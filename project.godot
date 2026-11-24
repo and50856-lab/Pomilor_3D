@@ -32,6 +32,7 @@ window/handheld/orientation=4
 3d_physics/layer_3="vehicles"
 3d_physics/layer_4="hitboxes"
 3d_physics/layer_5="items"
+3d_physics/layer_6="bodies"
 
 [physics]
 

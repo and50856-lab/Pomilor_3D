@@ -178,6 +178,34 @@ func _run() -> void:
         Ctl.action.emit("interact")
         await _wait(8.0)
 
+    # повреждения машин, карта, спавн NPC
+    p.spawn_vehicle("vaz")
+    await _wait(2.0)
+    var near_v: Vehicle = null
+    var bd: float = 1e9
+    for n in get_tree().get_nodes_in_group("vehicles"):
+        var vv: Vehicle = n as Vehicle
+        if vv != null and vv.mode == Vehicle.Mode.PARKED:
+            var dd: float = vv.global_position.distance_to(p.global_position)
+            if dd < bd:
+                bd = dd
+                near_v = vv
+    if near_v != null:
+        near_v.tire_hit(0, 100.0)
+        near_v.shot(near_v.global_position + Vector3(0, 1.0, 0), Vector3.FORWARD, 60.0)
+        near_v.ignite(0.4)
+        await _wait(2.5)
+        print("SELFTEST: машина взорвана: ", near_v.wrecked)
+    p.spawn_npc("ordinary")
+    hud._open_map()
+    await get_tree().process_frame
+    hud.close_map()
+    var phys_n: int = 0
+    for c in world.traffic.cars:
+        if is_instance_valid(c) and (c as Vehicle).mode == Vehicle.Mode.AI_PHYS:
+            phys_n += 1
+    print("SELFTEST: повреждения, карта, спавн NPC прошли; физических машин трафика: ", phys_n)
+
     # просто идём и смотрим на мир
     Ctl.t_move = Vector2(0.0, -1.0)
     Ctl.t_run = true
