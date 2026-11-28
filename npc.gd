@@ -3,7 +3,7 @@ extends CharacterBody3D
 # Пешеход / водитель. Реалистичные реакции: убегает от выстрелов, хромает и держится за рану,
 # дерётся, мстит за угнанную машину, может сесть за руль и быстро уехать.
 
-enum S { WALK, WAIT, CROSSING, FLEE, HURT, FIGHT, DEAD, DRIVER, CHASE, BUSY, HANDS_UP }
+enum S { WALK, WAIT, CROSSING, FLEE, HURT, FIGHT, DEAD, DRIVER, CHASE, BUSY, HANDS_UP, KNOCKED }
 
 var state: int = S.WALK
 var hp: float = 100.0
@@ -31,6 +31,7 @@ var lat: float = 0.0
 var panic_scream_cd: float = 0.0
 var aggressive: bool = false
 var punch_left: bool = false
+var _car_t: float = 0.0
 
 
 static func create() -> NPC:
@@ -164,8 +165,14 @@ func on_vehicle_shot(_pos: Vector3) -> void:
 
 # В водителя целятся: уехать на большой скорости или выйти с поднятыми руками.
 func on_aimed_at(pl: Node3D) -> void:
+    var to_pl: Vector3 = pl.global_position - global_position
+    to_pl.y = 0.0
+    to_pl = to_pl.normalized()
     if state == S.DRIVER and vehicle != null:
         var v: Vehicle = vehicle
+        var vf: Vector3 = -v.global_transform.basis.z
+        if vf.dot(-to_pl) < 0.1 and vf.dot(to_pl) < 0.1:
+            return
         if randf() < 0.5:
             v.panic()
             return
@@ -174,6 +181,9 @@ func on_aimed_at(pl: Node3D) -> void:
         _hands_up_start(2.8)
         return
     if state == S.WALK or state == S.WAIT or state == S.CROSSING:
+        var fwd_n: Vector3 = Vector3(-sin(yaw), 0.0, -cos(yaw))
+        if fwd_n.dot(to_pl) < -0.15:
+            return
         if randf() < 0.35:
             _start_flee(pl.global_position, 9.0)
         else:
@@ -204,6 +214,45 @@ func killed_in_car(pos: Vector3) -> void:
         return
     eject(pos + Vector3(0, 1.0, 0), 0.0)
     die(Vector3.UP, Vector3(0.0, 6.0, 0.0))
+
+
+# Человека сбило машиной / взрывом / тяжёлым попаданием: падает как тряпичная кукла, потом встаёт.
+func knock_down(vel: Vector3, secs: float) -> void:
+    if state == S.DEAD or state == S.DRIVER or state == S.KNOCKED:
+        return
+    if not Ragdoll.can_spawn():
+        rig.play("hit", 0.5)
+        return
+    state = S.KNOCKED
+    rig.hands_up = false
+    remove_from_group("npcs")
+    remove_from_group("walkers")
+    collision_layer = 0
+    cs.set_deferred("disabled", true)
+    set_physics_process(false)
+    Ragdoll.make(rig, vel, vel * 0.5, secs, self)
+
+
+func recovered(pos: Vector3, yaw_: float) -> void:
+    global_position = pos
+    yaw = yaw_
+    collision_layer = Const.L_CHAR
+    cs.set_deferred("disabled", false)
+    add_to_group("npcs")
+    add_to_group("walkers")
+    set_physics_process(true)
+    velocity = Vector3.ZERO
+    rig.wounded = "leg" if randf() < 0.5 else "torso"
+    wound_t = 25.0
+    net = Game.ped_net
+    cur = net.nearest(pos)
+    prev = -1
+    nxt = -1
+    has_target = false
+    state = S.HURT
+    state_t = 8.0
+    var pl: Node3D = Game.player as Node3D
+    threat = pl.global_position if pl != null else pos
 
 
 func place_at(pos: Vector3) -> void:
@@ -278,6 +327,20 @@ func take_hit(part: String, dmg: float, dir: Vector3, shooter) -> void:
         else:
             _start_flee(sp, 8.0)
         return
+    var kvel: Vector3 = dir.normalized() * 3.0 + Vector3(0.0, 1.0, 0.0)
+    var kd: bool = false
+    if shooter != null and is_instance_valid(shooter) and shooter is Vehicle:
+        var sv2: Vehicle = shooter
+        kvel = -sv2.global_transform.basis.z * sv2.speed_ms * 0.8 + Vector3(0.0, 3.0, 0.0)
+        kd = true
+    elif shooter == null or dmg * mult >= 40.0:
+        kvel = dir.normalized() * clampf(dmg * 0.05, 3.0, 12.0) + Vector3(0.0, 3.0, 0.0)
+        kd = true
+    elif dmg * mult >= 22.0 and randf() < 0.3:
+        kd = true
+    if kd:
+        knock_down(kvel, randf_range(2.5, 4.0))
+        return
     var w: String = "torso"
     if part == "leg":
         w = "leg"
@@ -321,7 +384,10 @@ func die(dir: Vector3, vel: Vector3 = Vector3.ZERO) -> void:
     var v: Vector3 = vel
     if v.length() < 0.1:
         v = dir.normalized() * 2.0
-    Corpse.make(self, rig, v)
+    if Ragdoll.can_spawn():
+        Ragdoll.make(rig, v, v * 0.5, -1.0, null)
+    else:
+        Corpse.make(self, rig, v)
     queue_free()
 
 
@@ -485,7 +551,30 @@ func _arrive() -> void:
     _choose_next()
 
 
+func _check_cars(delta: float) -> void:
+    _car_t -= delta
+    if _car_t > 0.0 or Game.traffic == null:
+        return
+    _car_t = 0.3
+    for c in Game.traffic.veh_cache:
+        if not is_instance_valid(c):
+            continue
+        var v: Vehicle = c as Vehicle
+        if v == null or absf(v.speed_ms) < 3.0:
+            continue
+        var rel: Vector3 = global_position - v.global_position
+        rel.y = 0.0
+        var dist: float = rel.length()
+        if dist > 11.0 or dist < 0.5:
+            continue
+        var vf: Vector3 = -v.global_transform.basis.z * signf(v.speed_ms)
+        if vf.dot(rel / dist) > 0.8 and absf(rel.cross(vf).y) < 2.6:
+            _start_flee(v.global_position, 3.0)
+            return
+
+
 func _walk(delta: float) -> void:
+    _check_cars(delta)
     if not has_target:
         if nxt < 0:
             _choose_next()

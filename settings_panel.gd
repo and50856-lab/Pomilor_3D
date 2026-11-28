@@ -12,7 +12,7 @@ const ROWS_G: Array = [
     ["aa", "Сглаживание"], ["aniso", "Анизотропная фильтрация"], ["bloom", "Bloom"], ["fps", "Ограничение FPS"],
 ]
 const ROWS_P: Array = [
-    ["sens", "Чувствительность камеры"], ["fov", "Угол обзора (FOV)"], ["showfps", "Показывать FPS"],
+    ["sens", "Чувствительность камеры"], ["fov", "Угол обзора (FOV)"], ["showfps", "Показывать FPS"], ["aimmode", "Прицел"],
 ]
 
 
@@ -94,6 +94,8 @@ func _cycle(id: String, dir: int) -> void:
             Settings.fov = clampf(Settings.fov + 5.0 * float(dir), 60.0, 100.0)
         "showfps":
             Settings.show_fps = not Settings.show_fps
+        "aimmode":
+            Settings.aim_toggle = not Settings.aim_toggle
     Settings.apply_all()
     Settings.save_settings()
     Sfx.play2d("click", -6.0)
@@ -122,6 +124,8 @@ func _text(id: String) -> String:
             return "%d" % int(Settings.fov)
         "showfps":
             return "Да" if Settings.show_fps else "Нет"
+        "aimmode":
+            return "Нажать" if Settings.aim_toggle else "Удерживать"
     return ""
 
 

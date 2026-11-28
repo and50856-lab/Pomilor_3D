@@ -37,6 +37,8 @@ var stuck_t: float = 0.0
 var prev_speed: float = 0.0
 var flip_t: float = 0.0
 var hit_cd: float = 0.0
+var honk_n: int = 0
+var lost_t: float = 0.0
 
 
 func init_on_edge(v: Vehicle, a_j: int, a_k: int, ax: int, dir_: int, frac: float) -> void:
@@ -209,6 +211,18 @@ func _scan(phys: bool) -> Vector3:
                     best = gap2
                     kind = 2.0
                     side = l2
+    if phys:
+        var o3: Vector3 = veh.global_position + Vector3(0, 0.7, 0)
+        var q := PhysicsRayQueryParameters3D.create(o3, o3 + fwd * (8.0 + maxf(speed, 0.0) * 0.5), Const.L_WORLD)
+        q.exclude = veh._ex
+        var h: Dictionary = veh.get_world_3d().direct_space_state.intersect_ray(q)
+        if not h.is_empty():
+            var hp3: Vector3 = h["position"]
+            var gap3: float = o3.distance_to(hp3) - half_len
+            if gap3 < best:
+                best = gap3
+                kind = 3.0
+                side = 0.0
     return Vector3(best, kind, side)
 
 
@@ -336,19 +350,21 @@ func update(dt: float) -> void:
     if blocked_now:
         stopped_t += dt
         if obs.y == 1.0:
-            if stopped_t > 1.4 and honk_cd <= 0.0:
+            if stopped_t > 1.4 and honk_cd <= 0.0 and honk_n < 3:
                 veh.honk()
                 honk_cd = 2.6
-        else:
+                honk_n += 1
+        elif obs.y == 2.0:
             blocked_t += dt
-            if blocked_t > 3.0 and honk_cd <= 0.0:
+            if blocked_t > 3.0 and honk_cd <= 0.0 and honk_n < 3:
                 veh.honk()
                 honk_cd = 3.0
+                honk_n += 1
             if blocked_t > 8.0 and not phys:
                 ghost_t = 4.0
                 blocked_t = 0.0
         if maneuver == 0 and not light_room:
-            if (obs.y == 1.0 and stopped_t > 3.5) or (obs.y == 2.0 and stopped_t > 6.0):
+            if (obs.y == 1.0 and stopped_t > 3.5) or (obs.y == 2.0 and stopped_t > 6.0) or (obs.y == 3.0 and stopped_t > 2.5):
                 avoid_target = _pick_side(obs)
                 if phys and _rear_clear():
                     maneuver = 1
@@ -358,6 +374,8 @@ func update(dt: float) -> void:
                     man_t = 7.0
     elif absf(speed) > 0.6:
         stopped_t = 0.0
+        if absf(speed) > 2.0:
+            honk_n = 0
         blocked_t = maxf(0.0, blocked_t - dt)
     if maneuver == 1:
         man_t -= dt
@@ -377,6 +395,13 @@ func update(dt: float) -> void:
             calm_t = 0.0
 
     if phys:
+        if state == 0:
+            var lane_c: float = _lane(axis, d, Const.node_pos(j, k))
+            var cur_lat: float = pos.z if axis == 0 else pos.x
+            if absf(cur_lat - lane_c) > 5.0:
+                lost_t += dt
+            else:
+                lost_t = maxf(0.0, lost_t - dt)
         # застряли без видимой причины — подаём назад
         if absf(speed) < 0.3 and allow > 1.0 and obs.x > 8.0 and maneuver == 0:
             stuck_t += dt
@@ -388,10 +413,9 @@ func update(dt: float) -> void:
         else:
             stuck_t = 0.0
         if state == 0 and final_leg:
-            if ahead < 1.8 and absf(speed) < 2.0:
-                var ls2: int = Game.light_state(axis)
-                if ls2 == 0 or committed or panic:
-                    _plan_cross()
+            var go: bool = Game.light_state(axis) == 0 or committed or panic
+            if go and ahead < 5.0 + maxf(speed, 0.0) * 0.6 and (obs.x > 5.0 or obs.y == 0.0):
+                _plan_cross()
         elif dist < 3.2:
             pi += 1
             if pi >= path.size():
@@ -436,6 +460,8 @@ func _control(dt: float, allow: float) -> void:
         return
     avoid = lerpf(avoid, avoid_target, minf(1.0, dt * 1.2))
     var look_d: float = clampf(maxf(speed, 0.0) * 0.7 + 3.5, 4.5, 16.0)
+    if state == 1:
+        look_d = clampf(maxf(speed, 0.0) * 0.35 + 2.5, 3.0, 6.5)
     var look: Vector3 = _lookahead(look_d)
     var sd: Vector3 = _seg_dir()
     look += Vector3(-sd.z, 0.0, sd.x) * avoid

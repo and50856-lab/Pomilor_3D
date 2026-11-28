@@ -86,10 +86,13 @@ func _stream() -> void:
         if dd > 280.0 and (cam == null or not cam.is_position_in_frustum(v.global_position)):
             _despawn(v)
             continue
-        if v.mode == Vehicle.Mode.AI_LANE and dd < 75.0 and phys_n < cap:
+        if v.ai != null and v.ai.lost_t > 12.0 and (cam == null or not cam.is_position_in_frustum(v.global_position) or dd > 60.0):
+            _despawn(v)
+            continue
+        if v.mode == Vehicle.Mode.AI_LANE and dd < 60.0 and phys_n < cap:
             v.set_ai_phys(true)
             phys_n += 1
-        elif v.mode == Vehicle.Mode.AI_PHYS and dd > 115.0:
+        elif v.mode == Vehicle.Mode.AI_PHYS and dd > 95.0:
             v.set_ai_phys(false)
             phys_n -= 1
 

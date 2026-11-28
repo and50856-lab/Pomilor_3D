@@ -62,7 +62,10 @@ var ads: bool = false
 var ads_t: float = 0.0
 var aim_t: float = 0.0
 var aim_cd: float = 0.0
-var muzzle_light: OmniLight3D
+var muzzle_flash_mi: MeshInstance3D
+var _flash_t: float = 0.0
+var _wall_tgt: float = 0.0
+var _wall: float = 0.0
 var vm_ads_pos: Vector3 = Vector3(0.0, -0.14, -0.3)
 
 
@@ -98,13 +101,21 @@ func _ready() -> void:
     cam.fov = Settings.fov
     arm.add_child(cam)
     Settings.register_camera(cam)
-    muzzle_light = OmniLight3D.new()
-    muzzle_light.light_color = Color(1.0, 0.75, 0.4)
-    muzzle_light.omni_range = 9.0
-    muzzle_light.light_energy = 0.0
-    muzzle_light.shadow_enabled = false
-    muzzle_light.position = Vector3(0, 0, -0.9)
-    head.add_child(muzzle_light)
+    muzzle_flash_mi = MeshInstance3D.new()
+    var fm := SphereMesh.new()
+    fm.radius = 0.09
+    fm.height = 0.18
+    fm.radial_segments = 8
+    fm.rings = 4
+    muzzle_flash_mi.mesh = fm
+    var fmat := StandardMaterial3D.new()
+    fmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+    fmat.albedo_color = Color(1.0, 0.85, 0.4)
+    muzzle_flash_mi.material_override = fmat
+    muzzle_flash_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+    muzzle_flash_mi.visible = false
+    muzzle_flash_mi.position = Vector3(0.12, -0.1, -0.85)
+    head.add_child(muzzle_flash_mi)
 
     cam_rig = Node3D.new()
     cam_rig.top_level = true
@@ -154,6 +165,8 @@ func _on_action(a: String) -> void:
             _apply_view_mode()
         "drop":
             drop_weapon()
+        "throw":
+            throw_weapon(Ctl.throw_power)
         "horn":
             if in_vehicle != null:
                 in_vehicle.honk()
@@ -169,13 +182,17 @@ func _apply_view_mode() -> void:
     arm.position = Vector3.ZERO
     rig.visible = true
     rig.set_shadow_only(false)
-    rig.set_fp_mode(not third)
+    rig.set_fp_mode(not third, false)
     vm.visible = (not third) and not dead
 
 
 # ---------- кадр ----------
 
 func _process(delta: float) -> void:
+    if _flash_t > 0.0:
+        _flash_t -= delta
+        if _flash_t <= 0.0:
+            muzzle_flash_mi.visible = false
     var lk: Vector2 = Ctl.take_look()
     var sens: float = 0.0032 * Settings.sensitivity
     ads_t = move_toward(ads_t, 1.0 if ads else 0.0, delta * 6.0)
@@ -211,6 +228,15 @@ func _update_rig(delta: float, hs: float) -> void:
         face = atan2(-velocity.x, -velocity.z)
     rig_yaw = lerp_angle(rig_yaw, face, minf(1.0, delta * 10.0))
     rig.rotation.y = rig_yaw
+    var fwd_v: Vector3 = Vector3(-sin(rig_yaw), 0.0, -cos(rig_yaw))
+    var vflat: Vector3 = Vector3(velocity.x, 0.0, velocity.z)
+    rig.walk_sign = 1.0 if (hs < 0.5 or vflat.dot(fwd_v) >= 0.0) else -1.0
+    if third:
+        rig.position = Vector3.ZERO
+        rig.set_fp_mode(false)
+    else:
+        rig.position = Vector3(sin(rig_yaw) * 0.2, 0.0, cos(rig_yaw) * 0.2)
+        rig.set_fp_mode(true, cam_pitch < -0.5)
     rig.speed = hs
     rig.run_amt = 1.0 if (Ctl.run and hs > 4.5) else 0.0
     rig.pitch_aim = cam_pitch * 0.7
@@ -267,7 +293,12 @@ func _physics_process(delta: float) -> void:
         return
     _regen(delta)
     _update_ads()
+    if Game.admin_noclip:
+        _fly(delta)
+        _weapon_logic(delta)
+        return
     _find_targets()
+    _wall_check()
     _move(delta)
     _weapon_logic(delta)
     _aim_check(delta)
@@ -301,6 +332,8 @@ func _move(delta: float) -> void:
     move_and_slide()
     if is_on_floor() and not _was_floor and _prev_vy < -4.0:
         Sfx.play3d("land", global_position, -2.0, randf_range(0.9, 1.1), 40.0)
+        if _prev_vy < -12.5:
+            take_damage((absf(_prev_vy) - 12.5) * 8.0, Vector3.UP)
     _was_floor = is_on_floor()
     var hsp: float = hv.length()
     if is_on_floor() and hsp > 0.5:
@@ -423,6 +456,7 @@ func _set_in_vehicle(v: Vehicle) -> void:
     fp_pitch = 0.0
     car_idle = 0.0
     reloading = false
+    Ctl.t_aim = false
     Game.prompt = ""
     _apply_view_mode()
 
@@ -551,6 +585,10 @@ func _punch() -> void:
     var fwd: Vector3 = -cam.global_transform.basis.z
     if Combat.melee_hit(self, head.global_position, fwd, 1.7, 8.0):
         Sfx.play3d("punch", global_position + fwd, 0.0, randf_range(0.9, 1.1), 30.0)
+    else:
+        var wh: Dictionary = Combat.melee_world(head.global_position, fwd, 1.7)
+        if not wh.is_empty():
+            _melee_world_effect(wh, 8.0, "punch")
 
 
 func _swing(wd: Dictionary) -> void:
@@ -564,6 +602,10 @@ func _swing(wd: Dictionary) -> void:
     var fwd: Vector3 = -cam.global_transform.basis.z
     if Combat.melee_hit(self, head.global_position, fwd, float(wd["range"]), float(wd["damage"])):
         Sfx.play3d(str(wd["snd"]), global_position + fwd, 2.0, randf_range(0.9, 1.1), 40.0)
+    else:
+        var wh: Dictionary = Combat.melee_world(head.global_position, fwd, float(wd["range"]))
+        if not wh.is_empty():
+            _melee_world_effect(wh, float(wd["damage"]), str(wd["snd"]))
 
 
 func _shoot(wd: Dictionary, kind: String) -> void:
@@ -572,16 +614,23 @@ func _shoot(wd: Dictionary, kind: String) -> void:
     if int(st["mag"]) <= 0:
         fire_cd = 0.3
         Sfx.play2d("empty", -4.0)
-        if int(st["reserve"]) > 0:
+        if _has_reserve(st):
             start_reload()
         return
-    st["mag"] = int(st["mag"]) - 1
+    if Game.admin_noreload:
+        if not Game.admin_inf:
+            st["mag"] = int(st["mag"]) - 1
+            if int(st["reserve"]) > 0:
+                st["mag"] = int(st["mag"]) + 1
+                st["reserve"] = int(st["reserve"]) - 1
+    else:
+        st["mag"] = int(st["mag"]) - 1
     fire_cd = 1.0 / float(wd["rate"])
     last_fire_t = float(Time.get_ticks_msec()) / 1000.0
     var origin: Vector3 = cam.global_position
     var dir: Vector3 = -cam.global_transform.basis.z
     if kind == "rocket":
-        Rocket.launch(head.global_position + dir * 1.1, dir, self)
+        Rocket.launch(head.global_position, dir, self)
         Game.gunshot.emit(origin, float(wd["loud"]))
     else:
         var ex: Array[RID] = []
@@ -599,14 +648,13 @@ func _shoot(wd: Dictionary, kind: String) -> void:
     if id == "mossberg":
         var t: SceneTreeTimer = get_tree().create_timer(0.45)
         t.timeout.connect(func() -> void: Sfx.play2d("pump", -4.0))
-    if int(st["mag"]) == 0 and int(st["reserve"]) > 0:
+    if int(st["mag"]) == 0 and _has_reserve(st):
         _auto_reload_t = 0.5
 
 
 func _flash() -> void:
-    muzzle_light.light_energy = 4.0
-    var tw: Tween = create_tween()
-    tw.tween_property(muzzle_light, "light_energy", 0.0, 0.07)
+    muzzle_flash_mi.visible = true
+    _flash_t = 0.06
 
 
 func start_reload() -> void:
@@ -618,7 +666,7 @@ func start_reload() -> void:
     if kind != "gun" and kind != "rocket":
         return
     var st: Dictionary = Game.owned[id]
-    if int(st["mag"]) >= int(wd["mag"]) or int(st["reserve"]) <= 0:
+    if int(st["mag"]) >= int(wd["mag"]) or not _has_reserve(st):
         return
     reloading = true
     reload_dur = float(wd["reload"])
@@ -634,9 +682,11 @@ func _finish_reload() -> void:
         return
     var wd: Dictionary = WeaponDefs.get_def(id)
     var st: Dictionary = Game.owned[id]
-    var take: int = mini(int(wd["mag"]) - int(st["mag"]), int(st["reserve"]))
+    var need: int = int(wd["mag"]) - int(st["mag"])
+    var take: int = need if Game.admin_inf else mini(need, int(st["reserve"]))
     st["mag"] = int(st["mag"]) + take
-    st["reserve"] = int(st["reserve"]) - take
+    if not Game.admin_inf:
+        st["reserve"] = int(st["reserve"]) - take
 
 
 func drop_weapon() -> void:
@@ -659,7 +709,7 @@ func drop_weapon() -> void:
 # ---------- урон ----------
 
 func take_damage(dmg: float, _dir: Vector3) -> void:
-    if dead:
+    if dead or Game.admin_god:
         return
     hp -= dmg
     last_damage_t = float(Time.get_ticks_msec()) / 1000.0
@@ -668,6 +718,95 @@ func take_damage(dmg: float, _dir: Vector3) -> void:
     Sfx.play3d("pain", global_position, 0.0, 0.8, 30.0)
     if hp <= 0.0:
         _die()
+
+
+func _has_reserve(st: Dictionary) -> bool:
+    return Game.admin_inf or int(st["reserve"]) > 0
+
+
+# Удар по миру или машине: звук, искры, след; машину можно разбить (бита, кулаки).
+func _melee_world_effect(wh: Dictionary, dmg: float, snd: String) -> void:
+    var pos: Vector3 = wh["position"]
+    var nrm: Vector3 = wh["normal"]
+    var col: Object = wh["collider"]
+    Sfx.play3d(snd, pos, 1.0, randf_range(0.85, 1.1), 40.0)
+    Effects.sparks(pos, nrm)
+    var par: Node = null
+    if col is Vehicle:
+        var v: Vehicle = col
+        v.apply_damage(dmg * 2.0)
+        par = v
+    Effects.bullet_hole(pos, nrm, par)
+
+
+# Чтобы оружие и руки не уходили внутрь стены при взгляде вплотную.
+func _wall_check() -> void:
+    if third:
+        _wall_tgt = 0.0
+        return
+    var from: Vector3 = cam.global_position
+    var d: Vector3 = -cam.global_transform.basis.z
+    var q := PhysicsRayQueryParameters3D.create(from, from + d * 0.85, Const.L_WORLD | Const.L_VEH)
+    var h: Dictionary = get_world_3d().direct_space_state.intersect_ray(q)
+    if h.is_empty():
+        _wall_tgt = 0.0
+    else:
+        var hp_: Vector3 = h["position"]
+        _wall_tgt = maxf(0.0, 0.85 - from.distance_to(hp_))
+
+
+# Админ: полёт сквозь всё (направление — куда смотришь, вверх/вниз — отдельные кнопки).
+func _fly(delta: float) -> void:
+    var inp: Vector2 = Ctl.move
+    var f: Vector3 = -cam.global_transform.basis.z
+    var r: Vector3 = cam.global_transform.basis.x
+    var v: Vector3 = f * (-inp.y) + r * inp.x
+    v += Vector3.UP * ((1.0 if Ctl.up else 0.0) - (1.0 if Ctl.down else 0.0))
+    if v.length() > 1.0:
+        v = v.normalized()
+    velocity = v * Game.fly_speed
+    global_position += velocity * delta
+    jump_req = false
+
+
+func set_noclip(on: bool) -> void:
+    if on and in_vehicle != null:
+        Game.admin_noclip = false
+        return
+    shape_node.disabled = on
+    collision_layer = 0 if on else Const.L_CHAR
+    collision_mask = 0 if on else (Const.L_WORLD | Const.L_VEH | Const.L_CHAR)
+    velocity = Vector3.ZERO
+    if not on:
+        var q := PhysicsRayQueryParameters3D.create(Vector3(global_position.x, 400.0, global_position.z), Vector3(global_position.x, -10.0, global_position.z), Const.L_WORLD)
+        var h: Dictionary = get_world_3d().direct_space_state.intersect_ray(q)
+        if not h.is_empty():
+            var hp_: Vector3 = h["position"]
+            if hp_.y > global_position.y + 0.5:
+                global_position = Vector3(global_position.x, hp_.y + 0.1, global_position.z)
+
+
+func throw_weapon(power: float) -> void:
+    var id: String = Game.equipped
+    if id == "" or busy_t > 0.0 or in_vehicle != null:
+        return
+    if id != "bat" and id != "deagle":
+        drop_weapon()
+        return
+    busy_t = 0.5
+    reloading = false
+    rig.play("throw", 0.5)
+    _start_anim("throw", 0.5)
+    await get_tree().create_timer(0.25).timeout
+    if dead or not Game.owned.has(id):
+        return
+    var data: Dictionary = Game.remove_weapon(id)
+    var d: Vector3 = (-cam.global_transform.basis.z + Vector3(0, 0.18, 0)).normalized()
+    var sp: float = lerpf(3.0, 9.5, clampf(power, 0.0, 1.0))
+    var pk: Pickup = Pickup.spawn(head.global_position + d * 0.7 + Vector3(0, -0.2, 0), id, int(data.get("mag", 0)), int(data.get("reserve", 0)), d * sp)
+    pk.thrown = true
+    pk.thrower = self
+    Sfx.play3d("swing", global_position, 0.0, 1.3, 30.0)
 
 
 func _regen(delta: float) -> void:
@@ -680,6 +819,8 @@ func _update_ads() -> void:
     var k: String = ""
     if Game.equipped != "":
         k = str(WeaponDefs.get_def(Game.equipped).get("kind", ""))
+    if k != "gun" and k != "rocket":
+        Ctl.t_aim = false
     ads = Ctl.aim and (k == "gun" or k == "rocket") and busy_t <= 0.0 and not reloading
     rig.ads = ads
 
@@ -687,6 +828,9 @@ func _update_ads() -> void:
 # Если навести оружие на человека или на водителя — он реагирует (руки вверх, бегство, уезжает).
 func _aim_check(delta: float) -> void:
     aim_cd -= delta
+    if not ads:
+        aim_t = 0.0
+        return
     if Game.equipped == "" or aim_cd > 0.0:
         return
     var k: String = str(WeaponDefs.get_def(Game.equipped).get("kind", ""))
@@ -809,7 +953,7 @@ func _refresh_weapon() -> void:
     if rig != null:
         rig.set_weapon(id)
         rig.set_shadow_only(false)
-        rig.set_fp_mode(not third)
+        rig.set_fp_mode(not third, false)
     for c in vm_r.get_children():
         c.queue_free()
     for c in vm_l.get_children():
@@ -894,4 +1038,5 @@ func _animate_viewmodel(delta: float, hs: float) -> void:
     if reloading:
         dip = -sin((1.0 - reload_t / maxf(reload_dur, 0.1)) * PI) * 0.22
     var sway: float = minf(hs / 4.0, 1.0)
-    vm.position = Vector3(sin(bob_t) * 0.006 * sway, dip + absf(sin(bob_t)) * 0.005 * sway, 0.0)
+    _wall = lerpf(_wall, _wall_tgt, minf(1.0, delta * 14.0))
+    vm.position = Vector3(sin(bob_t) * 0.006 * sway, dip + absf(sin(bob_t)) * 0.005 * sway - _wall * 0.25, _wall)

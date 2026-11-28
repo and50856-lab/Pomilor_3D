@@ -99,6 +99,12 @@ func build(cb: Callable) -> void:
     Effects.reset()
     Game.skids = SkidMarks.new()
     add_child(Game.skids)
+    Game.holes = MarkQuads.new()
+    add_child(Game.holes)
+    Game.holes.setup(int(Settings.HOLE_CAP[Settings.graphics]), Effects.hole_texture())
+    Game.scorch_marks = MarkQuads.new()
+    add_child(Game.scorch_marks)
+    Game.scorch_marks.setup([4, 8, 16, 30, 60][Settings.graphics], Effects.soot_texture())
     _rng.seed = 20260
     _p(0.0, "Звуки")
     while not Sfx.generate_next():
@@ -569,7 +575,7 @@ func _make_trees() -> void:
     tm.height = 2.6
     tm.radial_segments = int([5, 6, 8, 10, 12][Settings.graphics])
     tm.rings = 1
-    _mm(tm, WeaponModel.mat(Color(0.3, 0.2, 0.12), 0.0, 0.9), trunks, [], Settings.shadows >= 2)
+    _mm(tm, WeaponModel.mat(Color(0.3, 0.2, 0.12), 0.0, 0.9), trunks, [], Settings.shadows >= 3)
     var cm := SphereMesh.new()
     cm.radius = 1.7
     cm.height = 3.2
@@ -578,7 +584,7 @@ func _make_trees() -> void:
     var cmat := StandardMaterial3D.new()
     cmat.vertex_color_use_as_albedo = true
     cmat.roughness = 0.9
-    _mm(cm, cmat, crowns, cols, Settings.shadows >= 2)
+    _mm(cm, cmat, crowns, cols, Settings.shadows >= 3)
 
 
 # ---------- игрок, люди, транспорт, интерфейс ----------

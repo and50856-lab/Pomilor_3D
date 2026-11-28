@@ -5,6 +5,8 @@ extends RigidBody3D
 var weapon_id: String = ""
 var mag: int = 0
 var reserve: int = 0
+var thrown: bool = false
+var thrower = null
 
 
 static func spawn(pos: Vector3, id: String, m: int, r: int, vel: Vector3) -> Pickup:
@@ -31,6 +33,25 @@ func _ready() -> void:
     add_child(cs)
     var model: Node3D = WeaponModel.build(weapon_id)
     add_child(model)
+
+
+func _physics_process(_delta: float) -> void:
+    if not thrown:
+        return
+    if linear_velocity.length() < 3.0:
+        thrown = false
+        return
+    for n in get_tree().get_nodes_in_group("npcs"):
+        var npc: Node3D = n as Node3D
+        if npc == null:
+            continue
+        if (npc.global_position + Vector3(0, 1.0, 0)).distance_to(global_position) < 0.8:
+            var bat: bool = weapon_id == "bat"
+            npc.call("take_hit", "torso", 14.0 if bat else 8.0, linear_velocity.normalized(), thrower)
+            Sfx.play3d("bat_hit" if bat else "punch", global_position, 0.0, 1.0, 40.0)
+            thrown = false
+            linear_velocity *= 0.3
+            return
 
 
 func display_name() -> String:

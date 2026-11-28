@@ -30,6 +30,9 @@ var _car_mode: bool = false
 var _last_size: Vector2 = Vector2.ZERO
 var _map_touch: Dictionary = {}
 var _pinch_d: float = 0.0
+var _rd_t: float = 0.0
+var _drop_held: bool = false
+var _drop_ms: int = 0
 
 
 func _ready() -> void:
@@ -72,6 +75,8 @@ func _build_layout() -> void:
     _add("drop", Vector2(w - 95.0, h - 250.0), 32.0, "БРОСИТЬ")
     _add("aim", Vector2(w - 95.0, h - 335.0), 38.0, "ПРИЦЕЛ")
     _add("interact", Vector2(w - 340.0, h - 235.0), 46.0, "ДА")
+    _add("up", Vector2(w - 445.0, h - 120.0), 40.0, "ВВЕРХ")
+    _add("down", Vector2(w - 445.0, h - 215.0), 40.0, "ВНИЗ")
     _add("cam", Vector2(w - 50.0, 52.0), 28.0, "ВИД")
     _add("pause", Vector2(w - 112.0, 52.0), 28.0, "")
     _add("items", Vector2(w - 174.0, 52.0), 28.0, "ВЕЩИ")
@@ -83,6 +88,10 @@ func _build_layout() -> void:
     _add("hand", Vector2(w - 105.0, h - 290.0), 36.0, "СТОП")
     _add("horn", Vector2(w - 250.0, h - 215.0), 34.0, "СИГНАЛ")
     _last_size = size
+
+
+func _drop_light() -> bool:
+    return Game.equipped == "bat" or Game.equipped == "deagle"
 
 
 func _has_gun() -> bool:
@@ -100,6 +109,8 @@ func _active(id: String) -> bool:
             return _has_gun()
         "drop":
             return Game.equipped != ""
+        "up", "down":
+            return Game.admin_noclip
         "interact":
             return Game.prompt != ""
         "fire", "jump", "run", "cam", "pause", "items", "wheel":
@@ -229,6 +240,9 @@ func _release_all() -> void:
     Ctl.t_rev = false
     Ctl.t_hand = false
     Ctl.t_aim = false
+    Ctl.t_up = false
+    Ctl.t_down = false
+    _drop_held = false
 
 
 func _btn_down(id: String) -> void:
@@ -236,7 +250,10 @@ func _btn_down(id: String) -> void:
         "fire":
             Ctl.t_fire = true
         "aim":
-            Ctl.t_aim = true
+            if Settings.aim_toggle:
+                Ctl.t_aim = not Ctl.t_aim
+            else:
+                Ctl.t_aim = true
         "run":
             run_on = not run_on
             Ctl.t_run = run_on
@@ -250,8 +267,15 @@ func _btn_down(id: String) -> void:
             Ctl.t_rev = true
         "hand":
             Ctl.t_hand = true
-        "jump", "reload", "interact", "cam", "drop", "horn":
+        "jump", "reload", "interact", "cam", "horn":
             Ctl.action.emit(id)
+        "drop":
+            _drop_held = true
+            _drop_ms = Time.get_ticks_msec()
+        "up":
+            Ctl.t_up = true
+        "down":
+            Ctl.t_down = true
         "pause":
             _release_all()
             open_pause.emit()
@@ -267,7 +291,20 @@ func _btn_up(id: String) -> void:
         "fire":
             Ctl.t_fire = false
         "aim":
-            Ctl.t_aim = false
+            if not Settings.aim_toggle:
+                Ctl.t_aim = false
+        "drop":
+            var held: float = float(Time.get_ticks_msec() - _drop_ms) / 1000.0
+            _drop_held = false
+            if held >= 0.25 and _drop_light():
+                Ctl.throw_power = clampf(held / 3.0, 0.0, 1.0)
+                Ctl.action.emit("throw")
+            else:
+                Ctl.action.emit("drop")
+        "up":
+            Ctl.t_up = false
+        "down":
+            Ctl.t_down = false
         "left":
             Ctl.t_left = false
         "right":
@@ -492,7 +529,11 @@ func _process(delta: float) -> void:
     if size != _last_size or _btns.is_empty():
         _build_layout()
     Ctl.t_run = run_on
-    queue_redraw()
+    _rd_t += delta
+    var busy: bool = _joy_idx >= 0 or not _touch_btn.is_empty() or wheel_open or map_open or _flash_t > 0.0
+    if busy or _rd_t >= 0.04:
+        _rd_t = 0.0
+        queue_redraw()
 
 
 func _draw() -> void:
@@ -509,6 +550,12 @@ func _draw() -> void:
             draw_arc(c, 9.0, 0.0, TAU, 24, Color(1, 1, 1, 0.8), 1.6, true)
         if bool(Game.player.ads):
             draw_arc(c, 16.0, 0.0, TAU, 32, Color(1, 1, 1, 0.5), 1.4, true)
+    if _drop_held and _drop_light():
+        var held: float = float(Time.get_ticks_msec() - _drop_ms) / 1000.0
+        if held > 0.25:
+            var cb: Vector2 = size * 0.5 + Vector2(-40, 34)
+            draw_rect(Rect2(cb, Vector2(80, 7)), Color(0, 0, 0, 0.6))
+            draw_rect(Rect2(cb + Vector2(1, 1), Vector2(78.0 * clampf(held / 3.0, 0.0, 1.0), 5)), Color(1, 0.85, 0.3))
     _draw_joystick(size.y)
     for b in _btns:
         if _active(str(b["id"])):
@@ -530,9 +577,10 @@ func _draw() -> void:
 
 func _draw_bars() -> void:
     var hp: float = clampf(float(Game.player.hp) / 100.0, 0.0, 1.0)
-    draw_rect(Rect2(28, 24, 224, 14), Color(0, 0, 0, 0.5))
-    draw_rect(Rect2(30, 26, 220.0 * hp, 10), Color(0.85 - 0.5 * hp, 0.2 + 0.6 * hp, 0.2))
-    draw_string(_font, Vector2(260, 38), str(int(ceil(float(Game.player.hp)))), HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color(1, 1, 1, 0.95))
+    if not Game.admin_god:
+        draw_rect(Rect2(28, 24, 224, 14), Color(0, 0, 0, 0.5))
+        draw_rect(Rect2(30, 26, 220.0 * hp, 10), Color(0.85 - 0.5 * hp, 0.2 + 0.6 * hp, 0.2))
+        draw_string(_font, Vector2(260, 38), str(int(ceil(float(Game.player.hp)))), HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color(1, 1, 1, 0.95))
     if Settings.show_fps:
         draw_string(_font, Vector2(30, MM_POS.y + MM_SIZE + 22.0), "FPS %d" % Engine.get_frames_per_second(), HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(1, 1, 1, 0.7))
     if Game.equipped != "" and not _car_mode:
@@ -540,7 +588,9 @@ func _draw_bars() -> void:
         var txt: String = str(wd["name"])
         if Game.owned.has(Game.equipped) and str(wd["kind"]) != "melee":
             var st: Dictionary = Game.owned[Game.equipped]
-            txt += "   %d / %d" % [int(st["mag"]), int(st["reserve"])]
+            var mg: String = "∞" if (Game.admin_inf and Game.admin_noreload) else str(int(st["mag"]))
+            var rs: String = "∞" if Game.admin_inf else str(int(st["reserve"]))
+            txt += "   %s / %s" % [mg, rs]
         draw_string(_font, Vector2(size.x - 420.0, 124.0), txt, HORIZONTAL_ALIGNMENT_RIGHT, 400.0, 22, Color(1, 1, 1, 0.9))
 
 
@@ -590,7 +640,7 @@ func _draw_btn(b: Dictionary) -> void:
     var id: String = b["id"]
     var c: Vector2 = b["c"]
     var r: float = b["r"]
-    var pressed: bool = _touch_btn.values().has(id) or (id == "run" and run_on)
+    var pressed: bool = _touch_btn.values().has(id) or (id == "run" and run_on) or (id == "aim" and Ctl.t_aim)
     draw_circle(c, r, Color(1, 1, 1, 0.3) if pressed else Color(0, 0, 0, 0.35))
     draw_arc(c, r, 0.0, TAU, 48, Color(1, 1, 1, 0.65), 2.5, true)
     var label: String = str(b["label"])

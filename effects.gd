@@ -5,13 +5,12 @@ extends RefCounted
 static var _spark_mesh: Mesh = null
 static var _smoke_mesh: Mesh = null
 static var _hole_tex: Texture2D = null
-static var _holes: Array = []
-static var _hole_i: int = 0
+static var _soot_tex: Texture2D = null
+static var _hole_mat: StandardMaterial3D = null
 
 
 static func reset() -> void:
-    _holes.clear()
-    _hole_i = 0
+    pass
 
 
 static func _get_spark_mesh() -> Mesh:
@@ -93,15 +92,7 @@ static func explosion(pos: Vector3) -> void:
     g2.colors = PackedColorArray([Color(0.25, 0.25, 0.25, 0.8), Color(0.15, 0.15, 0.15, 0.0)])
     g2.offsets = PackedFloat32Array([0.0, 1.0])
     smoke.color_ramp = g2
-    var l := OmniLight3D.new()
-    l.light_color = Color(1.0, 0.6, 0.25)
-    l.light_energy = 12.0
-    l.omni_range = 28.0
-    Game.world.add_child(l)
-    l.global_position = pos + Vector3(0, 1.5, 0)
-    var tw: Tween = l.create_tween()
-    tw.tween_property(l, "light_energy", 0.0, 0.5)
-    tw.tween_callback(l.queue_free)
+    flash(pos + Vector3(0, 1.2, 0), 7.0, 0.35, Color(1.0, 0.65, 0.25))
 
 
 # Постоянный излучатель дыма (включается/выключается через emitting).
@@ -150,43 +141,87 @@ static func _make_hole_tex() -> Texture2D:
     return ImageTexture.create_from_image(img)
 
 
-# След от пули. parent — объект, к которому крепим (машина), иначе мир.
-static func bullet_hole(pos: Vector3, normal: Vector3, parent: Node) -> void:
-    var cap: int = int(Settings.HOLE_CAP[Settings.graphics])
-    if cap <= 0 or Game.world == null:
+# Вспышка без источника света: светящийся шар быстро растёт и гаснет (свет в Mobile-рендерере даёт подвисания).
+static func flash(pos: Vector3, size: float, dur: float, col: Color) -> void:
+    if Game.world == null:
         return
-    if _hole_tex == null:
-        _hole_tex = _make_hole_tex()
-    var d: Decal = null
-    if _holes.size() < cap:
-        d = Decal.new()
-        d.texture_albedo = _hole_tex
-        d.size = Vector3(0.16, 0.3, 0.16)
-        _holes.append(d)
-    else:
-        var cur = _holes[_hole_i]
-        if cur == null or not is_instance_valid(cur):
-            d = Decal.new()
-            d.texture_albedo = _hole_tex
-            d.size = Vector3(0.16, 0.3, 0.16)
-            _holes[_hole_i] = d
-        else:
-            d = cur
-        _hole_i = (_hole_i + 1) % cap
-    var par: Node = Game.world
-    if parent != null and is_instance_valid(parent):
-        par = parent
-    if d.get_parent() != par:
-        if d.get_parent() != null:
-            d.get_parent().remove_child(d)
-        par.add_child(d)
+    var mi := MeshInstance3D.new()
+    var sm := SphereMesh.new()
+    sm.radius = 0.5
+    sm.height = 1.0
+    sm.radial_segments = 8
+    sm.rings = 4
+    mi.mesh = sm
+    var mt := StandardMaterial3D.new()
+    mt.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+    mt.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+    mt.albedo_color = Color(col.r, col.g, col.b, 0.85)
+    mi.material_override = mt
+    mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+    Game.world.add_child(mi)
+    mi.global_position = pos
+    mi.scale = Vector3.ONE * size * 0.3
+    var tw: Tween = mi.create_tween()
+    tw.set_parallel(true)
+    tw.tween_property(mi, "scale", Vector3.ONE * size, dur)
+    tw.tween_property(mt, "albedo_color:a", 0.0, dur)
+    tw.chain().tween_callback(mi.queue_free)
+
+
+static func surface_basis(normal: Vector3) -> Basis:
     var y: Vector3 = normal.normalized()
     var x: Vector3 = y.cross(Vector3.UP)
     if x.length() < 0.01:
         x = y.cross(Vector3.RIGHT)
     x = x.normalized()
     var z: Vector3 = x.cross(y)
-    d.global_transform = Transform3D(Basis(x, y, z), pos + y * 0.02)
+    return Basis(x, y, z)
+
+
+static func hole_texture() -> Texture2D:
+    if _hole_tex == null:
+        _hole_tex = _make_hole_tex()
+    return _hole_tex
+
+
+static func soot_texture() -> Texture2D:
+    if _soot_tex == null:
+        var img := Image.create(64, 64, false, Image.FORMAT_RGBA8)
+        var n := FastNoiseLite.new()
+        n.frequency = 0.08
+        for y in 64:
+            for x in 64:
+                var d: float = Vector2(float(x) - 31.5, float(y) - 31.5).length() / 31.5
+                var a: float = clampf(1.0 - d, 0.0, 1.0)
+                a = a * a * (0.7 + 0.3 * n.get_noise_2d(float(x), float(y)))
+                img.set_pixel(x, y, Color(0.04, 0.04, 0.04, clampf(a * 1.3, 0.0, 0.88)))
+        _soot_tex = ImageTexture.create_from_image(img)
+    return _soot_tex
+
+
+static func hole_material() -> StandardMaterial3D:
+    if _hole_mat == null:
+        _hole_mat = StandardMaterial3D.new()
+        _hole_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+        _hole_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+        _hole_mat.albedo_texture = hole_texture()
+        _hole_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+    return _hole_mat
+
+
+# След от пули / царапина: на машине крепится к ней, на мире — в общий пул.
+static func bullet_hole(pos: Vector3, normal: Vector3, parent: Node) -> void:
+    if parent != null and is_instance_valid(parent) and parent is Vehicle:
+        (parent as Vehicle).add_hole(pos, normal)
+        return
+    if Game.holes != null:
+        Game.holes.add(pos, normal, 0.14)
+
+
+# Чёрная копоть после взрыва.
+static func scorch(pos: Vector3, normal: Vector3, size: float) -> void:
+    if Game.scorch_marks != null:
+        Game.scorch_marks.add(pos, normal, size)
 
 
 # Прогрев эффектов на экране загрузки (убирает подвисание при первом выстреле).

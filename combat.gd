@@ -121,6 +121,13 @@ static func melee_hit(attacker: Node3D, origin: Vector3, fwd: Vector3, reach: fl
     return any
 
 
+static func melee_world(origin: Vector3, fwd: Vector3, reach: float) -> Dictionary:
+    if Game.world == null:
+        return {}
+    var q := PhysicsRayQueryParameters3D.create(origin, origin + fwd.normalized() * reach, Const.L_WORLD | Const.L_VEH)
+    return Game.world.get_world_3d().direct_space_state.intersect_ray(q)
+
+
 static func explode(pos: Vector3, radius: float, dmg: float, attacker, skip = null, veh_mult: float = 10.0) -> void:
     if Game.world == null:
         return

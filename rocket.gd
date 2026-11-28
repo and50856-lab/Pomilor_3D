@@ -5,7 +5,7 @@ extends Node3D
 var vel: Vector3 = Vector3.ZERO
 var shooter = null
 var life: float = 0.0
-var _light: OmniLight3D
+var _hit_n: Vector3 = Vector3.ZERO
 
 
 static func launch(pos: Vector3, dir: Vector3, who) -> void:
@@ -43,12 +43,6 @@ func _ready() -> void:
     tube.rotation = Vector3(-PI * 0.5, 0.0, 0.0)
     tube.position = Vector3(0, 0, 0.4)
     add_child(tube)
-    _light = OmniLight3D.new()
-    _light.light_color = Color(1.0, 0.6, 0.2)
-    _light.light_energy = 3.0
-    _light.omni_range = 8.0
-    _light.position = Vector3(0, 0, 0.7)
-    add_child(_light)
 
 
 func _physics_process(delta: float) -> void:
@@ -63,10 +57,12 @@ func _physics_process(delta: float) -> void:
     var nh: Dictionary = Combat.ray_npc(from, end)
     if not nh.is_empty():
         global_position = nh["pos"]
+        _hit_n = -vel.normalized()
         _boom()
         return
     if not hit.is_empty():
         global_position = end
+        _hit_n = hit["normal"]
         _boom()
         return
     global_position = to
@@ -76,5 +72,16 @@ func _physics_process(delta: float) -> void:
 
 func _boom() -> void:
     set_physics_process(false)
-    Combat.explode(global_position, 9.0, 260.0, shooter)
+    var p: Vector3 = global_position
+    Combat.explode(p, 9.0, 260.0, shooter)
+    var n: Vector3 = _hit_n
+    var sp: Vector3 = p
+    if n == Vector3.ZERO:
+        var q := PhysicsRayQueryParameters3D.create(p, p - Vector3(0, 4.0, 0), Const.L_WORLD)
+        var h: Dictionary = get_world_3d().direct_space_state.intersect_ray(q)
+        if not h.is_empty():
+            sp = h["position"]
+            n = h["normal"]
+    if n != Vector3.ZERO:
+        Effects.scorch(sp, n, 4.5)
     queue_free()

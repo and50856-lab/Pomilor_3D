@@ -18,6 +18,7 @@ var door_node: Node3D = null
 var steer_node: Node3D = null
 var paint_mi: MeshInstance3D = null
 var glass_mi: MeshInstance3D = null
+var lod_mi: MeshInstance3D = null
 var seat_local: Vector3 = Vector3.ZERO
 var fuel_cap: Vector3 = Vector3.ZERO
 var wheel_r: float = 0.35
@@ -86,6 +87,7 @@ var _fx_fire: CPUParticles3D = null
 var _fx_light: OmniLight3D = null
 var _fx_clock: float = 0.0
 var _react_cd: float = 0.0
+var _holes: Array = []
 
 
 func setup(id: String, color: Color) -> void:
@@ -122,6 +124,7 @@ func setup(id: String, color: Color) -> void:
     seat_local = model["seat"]
     paint_mi = model["paint"]
     glass_mi = model["glass"]
+    lod_mi = model["lod"]
     fuel_cap = model["fuel"]
 
     var cs := CollisionShape3D.new()
@@ -340,6 +343,22 @@ func shot(pos: Vector3, dir: Vector3, dmg: float) -> void:
         driver_npc.call("on_vehicle_shot", pos)
 
 
+func add_hole(pos: Vector3, normal: Vector3) -> void:
+    if _holes.size() >= 10:
+        var old = _holes.pop_front()
+        if is_instance_valid(old):
+            old.queue_free()
+    var mi := MeshInstance3D.new()
+    var pm := PlaneMesh.new()
+    pm.size = Vector2(0.14, 0.14)
+    mi.mesh = pm
+    mi.material_override = Effects.hole_material()
+    mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+    add_child(mi)
+    mi.global_transform = Transform3D(Effects.surface_basis(normal), pos + normal.normalized() * 0.015)
+    _holes.append(mi)
+
+
 func tire_hit(i: int, dmg: float) -> void:
     tire_hp[i] = float(tire_hp[i]) - dmg / 40.0
     if float(tire_hp[i]) <= 0.0 and int(tire_state[i]) == 0:
@@ -414,13 +433,6 @@ func _ensure_fx() -> void:
     var am: int = int(Settings.SMOKE_AMOUNT[g])
     _fx_smoke = Effects.make_smoke(self, _hood(), am, 2.4, Color(0.7, 0.7, 0.72), 0.5, 1.4, 1.8)
     _fx_fire = Effects.make_fire(self, _hood() + Vector3(0, 0.1, 0), maxi(4, am / 2))
-    if g >= 2:
-        _fx_light = OmniLight3D.new()
-        _fx_light.light_color = Color(1.0, 0.55, 0.2)
-        _fx_light.omni_range = 9.0
-        _fx_light.light_energy = 0.0
-        _fx_light.position = _hood() + Vector3(0, 0.6, 0)
-        add_child(_fx_light)
 
 
 func _apply_stage_fx() -> void:
@@ -480,6 +492,12 @@ func explode_now() -> void:
         paint_mi.material_override = m
     if glass_mi != null:
         glass_mi.visible = false
+    if lod_mi != null:
+        var lm := StandardMaterial3D.new()
+        lm.albedo_color = Color(0.2, 0.09, 0.05)
+        lm.roughness = 0.95
+        lod_mi.material_override = lm
+    Effects.scorch(Vector3(global_position.x, ground_at(global_position), global_position.z), Vector3.UP, 5.5)
     if engine_snd != null:
         engine_snd.stop()
     _ensure_fx()
@@ -798,7 +816,7 @@ func _visuals(delta: float) -> void:
 
 
 func _runover() -> void:
-    if absf(speed_ms) < 5.0:
+    if absf(speed_ms) < 1.5:
         return
     var now: float = float(Time.get_ticks_msec()) / 1000.0
     var inv: Transform3D = global_transform.affine_inverse()
@@ -818,7 +836,7 @@ func _runover() -> void:
         if _recent.has(bid) and now - float(_recent[bid]) < 1.2:
             continue
         _recent[bid] = now
-        var dmg: float = clampf(absf(speed_ms) * 9.0, 15.0, 180.0)
+        var dmg: float = clampf(absf(speed_ms) * 9.0, 4.0, 180.0)
         if n3.has_method("take_hit"):
             n3.call("take_hit", "torso", dmg, dirv, self)
         elif n3.has_method("take_damage"):

@@ -12,8 +12,8 @@ const RENDER_SCALE: Array = [0.5, 0.66, 0.8, 1.0, 1.0]
 const VIEW_FAR: Array = [140.0, 220.0, 340.0, 520.0, 900.0]
 const SHADOW_ATLAS: Array = [1024, 2048, 2048, 4096, 8192]
 const SHADOW_DIST: Array = [45.0, 75.0, 110.0, 160.0, 240.0]
-const NPC_COUNT: Array = [8, 12, 20, 32, 50]
-const TRAFFIC_COUNT: Array = [5, 8, 12, 20, 30]
+const NPC_COUNT: Array = [8, 13, 22, 36, 58]
+const TRAFFIC_COUNT: Array = [5, 8, 13, 21, 33]
 # Детализация по пресету графики (индекс 0 = очень низко ... 4 = ультра)
 const LOD_PEOPLE: Array = [60.0, 90.0, 140.0, 220.0, 400.0]
 const LOD_LIMBS: Array = [25.0, 40.0, 65.0, 110.0, 220.0]
@@ -25,7 +25,8 @@ const LAMP_SEG: Array = [4, 6, 8, 12, 16]
 const SKID_CAP: Array = [40, 100, 250, 500, 1000]
 const SMOKE_AMOUNT: Array = [4, 8, 14, 26, 48]
 const HOLE_CAP: Array = [8, 20, 50, 120, 300]
-const PHYS_CARS: Array = [4, 6, 8, 12, 16]
+const PHYS_CARS: Array = [2, 3, 4, 6, 10]
+const RAGDOLL_CAP: Array = [1, 2, 3, 5, 8]
 const TEX_SIZE: Array = [128, 256, 256, 512, 1024]
 const PART_SCALE: Array = [0.3, 0.5, 0.8, 1.0, 1.4]
 
@@ -41,6 +42,7 @@ var fps_idx: int = 4
 var sensitivity: float = 1.0
 var fov: float = 75.0
 var show_fps: bool = true
+var aim_toggle: bool = false
 
 var env: Environment = null
 var sun: DirectionalLight3D = null
@@ -72,6 +74,7 @@ func load_settings() -> void:
     sensitivity = clampf(float(cf.get_value("p", "sens", sensitivity)), 0.3, 2.5)
     fov = clampf(float(cf.get_value("p", "fov", fov)), 60.0, 100.0)
     show_fps = bool(cf.get_value("p", "show_fps", show_fps))
+    aim_toggle = bool(cf.get_value("p", "aim_toggle", aim_toggle))
 
 
 func _auto_defaults() -> void:
@@ -103,6 +106,7 @@ func save_settings() -> void:
     cf.set_value("p", "sens", sensitivity)
     cf.set_value("p", "fov", fov)
     cf.set_value("p", "show_fps", show_fps)
+    cf.set_value("p", "aim_toggle", aim_toggle)
     cf.save(PATH)
 
 
@@ -156,12 +160,10 @@ func apply_all() -> void:
 
 
 func _apply_fps() -> void:
-    var lim: int = FPS_VALUES[fps_idx]
-    Engine.max_fps = lim
-    if lim == 0:
-        DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
-    else:
-        DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_ENABLED)
+    # vsync выключен: иначе на слабых телефонах FPS «прилипает» к 30. Потолок задаёт Engine.max_fps.
+    Engine.max_fps = FPS_VALUES[fps_idx]
+    DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
+    Engine.max_physics_steps_per_frame = 3
 
 
 func _apply_viewport() -> void:

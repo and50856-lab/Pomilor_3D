@@ -8,6 +8,7 @@ var _content: VBoxContainer
 var _tab_btns: Array = []
 var _tab: int = 0
 var _opened_at: int = 0
+var _fly_label: Label = null
 
 
 func _ready() -> void:
@@ -31,7 +32,7 @@ func _ready() -> void:
     var top := HBoxContainer.new()
     top.add_theme_constant_override("separation", 10)
     root.add_child(top)
-    var names: Array = ["Оружия", "Машины", "NPC", "Настройки"]
+    var names: Array = ["Оружия", "Машины", "NPC", "Админ панель", "Настройки"]
     for i in names.size():
         var b: Button = UI.button(str(names[i]), Vector2(190, 56), 24)
         b.pressed.connect(_show_tab.bind(i))
@@ -86,6 +87,8 @@ func _show_tab(i: int) -> void:
         2:
             _build_npc()
         3:
+            _build_admin()
+        4:
             _build_settings()
 
 
@@ -144,6 +147,76 @@ func _build_cars() -> void:
         card.custom_minimum_size = Vector2(320, 270)
         card.pressed.connect(_on_car.bind(str(id)))
         row.add_child(card)
+
+
+func _admin_row(title: String, value: bool, cb: Callable) -> void:
+    var h := HBoxContainer.new()
+    h.alignment = BoxContainer.ALIGNMENT_CENTER
+    h.add_theme_constant_override("separation", 20)
+    var l: Label = UI.label(title, 24)
+    l.custom_minimum_size = Vector2(430, 44)
+    h.add_child(l)
+    var sw := ToggleSwitch.new()
+    sw.on = value
+    sw.toggled.connect(cb)
+    h.add_child(sw)
+    _content.add_child(h)
+
+
+func _build_admin() -> void:
+    var t: Label = UI.label("АДМИН ПАНЕЛЬ", 30, UI.ACCENT)
+    t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    _content.add_child(t)
+    _admin_row("Бессмертие", Game.admin_god, _on_god)
+    _admin_row("Noclip (полёт сквозь всё)", Game.admin_noclip, _on_noclip)
+    _admin_row("Бесконечные патроны", Game.admin_inf, _on_inf)
+    _admin_row("Без перезарядки", Game.admin_noreload, _on_noreload)
+    var box := VBoxContainer.new()
+    box.alignment = BoxContainer.ALIGNMENT_CENTER
+    box.add_theme_constant_override("separation", 4)
+    _fly_label = UI.label("", 22, UI.ACCENT)
+    _fly_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    box.add_child(_fly_label)
+    var sl := HSlider.new()
+    sl.min_value = 3.6
+    sl.max_value = 66.0
+    sl.step = 0.1
+    sl.value = Game.fly_speed
+    sl.custom_minimum_size = Vector2(620, 36)
+    sl.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+    sl.value_changed.connect(_on_fly)
+    box.add_child(sl)
+    var cap: Label = UI.label("скорость полёта: от шага до 10× бега", 15, Color(1, 1, 1, 0.5))
+    cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    box.add_child(cap)
+    _content.add_child(box)
+    _on_fly(Game.fly_speed)
+
+
+func _on_god(on: bool) -> void:
+    Game.admin_god = on
+    if Game.player != null:
+        Game.player.hp = 100.0
+
+
+func _on_noclip(on: bool) -> void:
+    Game.admin_noclip = on
+    if Game.player != null:
+        Game.player.call("set_noclip", on)
+
+
+func _on_inf(on: bool) -> void:
+    Game.admin_inf = on
+
+
+func _on_noreload(on: bool) -> void:
+    Game.admin_noreload = on
+
+
+func _on_fly(v: float) -> void:
+    Game.fly_speed = v
+    if _fly_label != null:
+        _fly_label.text = "%.1f м/с  (%d км/ч)" % [v, int(v * 3.6)]
 
 
 func _build_npc() -> void:

@@ -28,13 +28,19 @@ var weapon_node: Node3D = null
 var weapon_id: String = ""
 var meshes: Array = []
 var active: bool = true
+var lod_mi: MeshInstance3D = null
+var walk_sign: float = 1.0
 var _lod_t: float = 0.0
 
 # входы анимации (выставляет владелец)
 var speed: float = 0.0
 var run_amt: float = 0.0
 var aim: int = 0
-var sitting: bool = false
+var sitting: bool = false:
+    set(v):
+        sitting = v
+        if lod_mi != null:
+            lod_mi.visible = not v
 var wounded: String = ""
 var dead: bool = false
 var honk_t: float = 0.0
@@ -76,6 +82,7 @@ func build() -> void:
     var lr: Array = _make_leg(0.10)
     leg_r = lr[0]
     shin_r = lr[1]
+    build_lod()
 
 
 func _fl() -> float:
@@ -84,6 +91,71 @@ func _fl() -> float:
 
 func _fs() -> float:
     return float(Settings.LOD_SMALL[Settings.graphics])
+
+
+func _rig_xform(n: Node3D) -> Transform3D:
+    var t: Transform3D = n.transform
+    var p: Node = n.get_parent()
+    while p != null and p != self:
+        t = (p as Node3D).transform * t
+        p = p.get_parent()
+    return t
+
+
+# Все части человека склеиваются в один меш (в позе «стоя»). Вдали рисуется он, вблизи — отдельные части.
+func build_lod() -> void:
+    var verts := PackedVector3Array()
+    var norms := PackedVector3Array()
+    var cols := PackedColorArray()
+    var idx := PackedInt32Array()
+    for m in meshes:
+        var mi: MeshInstance3D = m
+        var arr: Array = mi.mesh.surface_get_arrays(0)
+        var v: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+        var nr: PackedVector3Array = arr[Mesh.ARRAY_NORMAL]
+        var xf: Transform3D = _rig_xform(mi)
+        var col: Color = (mi.material_override as StandardMaterial3D).albedo_color
+        var base: int = verts.size()
+        for i in v.size():
+            verts.append(xf * v[i])
+            norms.append((xf.basis * nr[i]).normalized())
+            cols.append(col)
+        var ix: Variant = arr[Mesh.ARRAY_INDEX]
+        if ix is PackedInt32Array and (ix as PackedInt32Array).size() > 0:
+            for i in (ix as PackedInt32Array):
+                idx.append(i + base)
+        else:
+            for i in v.size():
+                idx.append(base + i)
+    var arrays: Array = []
+    arrays.resize(Mesh.ARRAY_MAX)
+    arrays[Mesh.ARRAY_VERTEX] = verts
+    arrays[Mesh.ARRAY_NORMAL] = norms
+    arrays[Mesh.ARRAY_COLOR] = cols
+    arrays[Mesh.ARRAY_INDEX] = idx
+    var am := ArrayMesh.new()
+    am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+    lod_mi = MeshInstance3D.new()
+    lod_mi.mesh = am
+    var mt := StandardMaterial3D.new()
+    mt.vertex_color_use_as_albedo = true
+    mt.roughness = 0.85
+    lod_mi.material_override = mt
+    var near: float = float(Settings.LOD_LIMBS[Settings.graphics])
+    lod_mi.visibility_range_begin = near
+    lod_mi.visibility_range_end = float(Settings.LOD_PEOPLE[Settings.graphics])
+    if Settings.shadows < 2:
+        lod_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+    add_child(lod_mi)
+    for m in meshes:
+        (m as MeshInstance3D).visibility_range_end = near
+
+
+func disable_lod() -> void:
+    if lod_mi != null:
+        lod_mi.visible = false
+    for m in meshes:
+        (m as MeshInstance3D).visibility_range_end = float(Settings.LOD_PEOPLE[Settings.graphics])
 
 
 func _reg(mi: MeshInstance3D, far: float = 0.0) -> void:
@@ -224,6 +296,7 @@ func die(_dir: Vector3) -> void:
 
 func go_limp() -> void:
     dead = true
+    disable_lod()
     arm_l.rotation = Vector3(0.4, 0.0, 0.7)
     arm_r.rotation = Vector3(-0.3, 0.0, -0.8)
     fore_l.rotation = Vector3(-0.4, 0, 0)
@@ -239,10 +312,14 @@ func go_limp() -> void:
 
 
 # Вид от первого лица: голову и руки прячем (руки рисует viewmodel), туловище и ноги видны, если смотреть вниз.
-func set_fp_mode(on: bool) -> void:
+func set_fp_mode(on: bool, show_body: bool = false) -> void:
     head.visible = not on
     arm_l.visible = not on
     arm_r.visible = not on
+    var body: bool = (not on) or show_body
+    torso.visible = body
+    leg_l.visible = body
+    leg_r.visible = body
 
 
 func _rot(n: Node3D, x: float, y: float, z: float, k: float) -> void:
@@ -270,7 +347,7 @@ func _process(delta: float) -> void:
     var ph: float = sin(p * PI) if _act_t > 0.0 else 0.0
     var amp: float = clampf(speed / 5.5, 0.0, 1.0) * (0.6 + 0.4 * run_amt)
     if speed > 0.15:
-        _cycle += delta * (4.2 + speed * 1.15)
+        _cycle += delta * (4.2 + speed * 1.15) * walk_sign
     var s: float = sin(_cycle)
     var c: float = cos(_cycle)
 

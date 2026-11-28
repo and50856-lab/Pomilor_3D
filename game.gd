@@ -11,6 +11,8 @@ var hud = null
 var traffic = null
 var npc_mgr = null
 var skids = null
+var holes = null
+var scorch_marks = null
 var world: Node3D = null
 var ped_net: PedNet = null
 var light_time: float = 0.0
@@ -19,6 +21,11 @@ var prompt_btn: String = ""
 var running: bool = false
 var owned: Dictionary = {}
 var equipped: String = ""
+var admin_god: bool = false
+var admin_noclip: bool = false
+var admin_inf: bool = false
+var admin_noreload: bool = false
+var fly_speed: float = 19.8
 
 var _walkers: Array = []
 var _walkers_t: float = 0.0
@@ -30,6 +37,8 @@ func reset() -> void:
     traffic = null
     npc_mgr = null
     skids = null
+    holes = null
+    scorch_marks = null
     world = null
     ped_net = null
     light_time = 0.0
@@ -38,6 +47,11 @@ func reset() -> void:
     running = false
     owned.clear()
     equipped = ""
+    admin_god = false
+    admin_noclip = false
+    admin_inf = false
+    admin_noreload = false
+    fly_speed = 19.8
     _walkers = []
     set_slowmo(false)
     if is_inside_tree():

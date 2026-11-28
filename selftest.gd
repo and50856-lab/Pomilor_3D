@@ -206,6 +206,35 @@ func _run() -> void:
             phys_n += 1
     print("SELFTEST: повреждения, карта, спавн NPC прошли; физических машин трафика: ", phys_n)
 
+    # админ-режимы, метание, нокдаун
+    Game.admin_noclip = true
+    p.set_noclip(true)
+    Ctl.t_move = Vector2(0.0, -1.0)
+    await _wait(0.6)
+    Ctl.t_move = Vector2.ZERO
+    Game.admin_noclip = false
+    p.set_noclip(false)
+    Game.admin_god = true
+    Game.admin_inf = true
+    Game.admin_noreload = true
+    Game.give_weapon("ak47")
+    Game.equip("ak47")
+    Ctl.t_fire = true
+    await _wait(0.5)
+    Ctl.t_fire = false
+    Game.admin_god = false
+    Game.admin_inf = false
+    Game.admin_noreload = false
+    Game.give_weapon("bat")
+    Game.equip("bat")
+    p.throw_weapon(1.0)
+    await _wait(1.5)
+    var kn: Array = get_tree().get_nodes_in_group("npcs")
+    if kn.size() > 0:
+        (kn[0] as NPC).knock_down(Vector3(3, 2, 0), 1.5)
+        await _wait(4.0)
+    print("SELFTEST: админ-режимы, метание, нокдаун прошли")
+
     # просто идём и смотрим на мир
     Ctl.t_move = Vector2(0.0, -1.0)
     Ctl.t_run = true
